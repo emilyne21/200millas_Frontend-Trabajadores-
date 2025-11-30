@@ -2,44 +2,111 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import CustomerHeader from "@/components/customer-header"
-import CustomerFooter from "@/components/customer-footer"
+import { Great_Vibes, Montserrat } from "next/font/google"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
+
+// Fuentes
+const greatVibes = Great_Vibes({ weight: "400", subsets: ["latin"] })
+const montserrat = Montserrat({ subsets: ["latin"] })
 
 export default function LoginPage() {
   const router = useRouter()
   const { login } = useAuth()
+  
+  // Estados
+  const [showRegister, setShowRegister] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [showRegister, setShowRegister] = useState(false)
   const [name, setName] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [role, setRole] = useState("chef")
 
+  // Función para determinar la ruta según el rol
+  const getRedirectPath = (userRole: string): string => {
+    const role = userRole?.toLowerCase() || ""
+    
+    if (role === "admin") {
+      return "/dashboard"
+    } else if (role === "customer") {
+      return "/pedidos"
+    } else if (role === "cook" || role === "dispatcher" || role === "driver") {
+      return "/dashboard" // Dashboard principal para trabajadores
+    }
+    return "/dashboard" // Por defecto, dashboard
+  }
+
+  // --- LÓGICA DE NEGOCIO ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (!email || !password) {
+      toast.error("Por favor completa todos los campos")
+      return
+    }
+
     setIsLoading(true)
 
     try {
-      // Simulated login - replace with actual API call
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      
-      // For demo purposes, accept any email/password
-      // In production, this should call the actual login API
-      await login(email, password)
-      
-      toast.success("¡Bienvenido de nuevo!")
-      router.push("/")
-    } catch (error) {
+      // Intentar login con la API
+      try {
+        await login(email, password)
+        
+        // Obtener el usuario del localStorage después del login
+        const storedUser = localStorage.getItem("user")
+        const user = storedUser ? JSON.parse(storedUser) : null
+        
+        toast.success("¡Bienvenido de nuevo!")
+        const redirectPath = getRedirectPath(user?.role || "")
+        console.log("Redirigiendo a:", redirectPath, "con rol:", user?.role)
+        
+        // Usar window.location para forzar la navegación completa
+        window.location.href = redirectPath
+        return
+      } catch (apiError: any) {
+        // Si es un error de red, intentar con usuarios mock
+        if (apiError?.message?.includes("NetworkError") || apiError?.message?.includes("fetch") || apiError?.name === "TypeError") {
+          console.log("API no disponible, usando usuarios mock")
+          
+          // Buscar en usuarios mock
+          const mockUsers = JSON.parse(localStorage.getItem("mockUsers") || "[]")
+          const foundUser = mockUsers.find((u: any) => u.email === email.trim() && u.password === password)
+
+          if (foundUser) {
+            // Usuario encontrado en mock, iniciar sesión
+            localStorage.setItem("user", JSON.stringify(foundUser.user))
+            localStorage.setItem("token", `mock_token_${Date.now()}`)
+            
+            toast.success("¡Bienvenido de nuevo!")
+            const redirectPath = getRedirectPath(foundUser.user.role)
+            console.log("Redirigiendo a:", redirectPath, "con rol:", foundUser.user.role)
+            
+            // Forzar actualización del contexto de auth
+            window.dispatchEvent(new Event("storage"))
+            
+            // Usar window.location para forzar la navegación completa
+            setTimeout(() => {
+              window.location.href = redirectPath
+            }, 500)
+            return
+          } else {
+            // No encontrado en mock, mostrar error
+            throw new Error("Credenciales incorrectas. Si no tienes cuenta, regístrate primero.")
+          }
+        } else {
+          // Otro tipo de error, lanzarlo
+          throw apiError
+        }
+      }
+    } catch (error: any) {
+      console.error("Login error:", error)
       toast.error("Error al iniciar sesión", {
-        description: "Verifica tus credenciales e intenta nuevamente",
+        description: error?.message || "Verifica tus credenciales e intenta nuevamente",
       })
-    } finally {
       setIsLoading(false)
     }
   }
@@ -47,240 +114,286 @@ export default function LoginPage() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     
+    // Validar campos
+    if (!name || !name.trim()) {
+      toast.error("Por favor ingresa tu nombre completo")
+      return
+    }
+    if (!email || !email.trim()) {
+      toast.error("Por favor ingresa tu correo electrónico")
+      return
+    }
+    if (!password) {
+      toast.error("Por favor ingresa una contraseña")
+      return
+    }
     if (password !== confirmPassword) {
       toast.error("Las contraseñas no coinciden")
+      return
+    }
+    if (password.length < 6) {
+      toast.error("La contraseña debe tener al menos 6 caracteres")
+      return
+    }
+    if (!role) {
+      toast.error("Por favor selecciona un rol")
       return
     }
 
     setIsLoading(true)
 
     try {
-      // Simulated register - replace with actual API call
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      // Mapear los roles del formulario a los roles del backend
+      const backendRole = role === "chef" ? "cook" : role === "repartidor" ? "driver" : "cook"
       
+      // Crear usuario simulado
+      const newUser = {
+        id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        email: email.trim(),
+        name: name.trim(),
+        role: backendRole as "customer" | "cook" | "dispatcher" | "driver" | "admin",
+        tenantId: process.env.NEXT_PUBLIC_TENANT_ID || "200millas"
+      }
+      
+      // Guardar credenciales para login futuro
+      const users = JSON.parse(localStorage.getItem("mockUsers") || "[]")
+      users.push({
+        email: email.trim(),
+        password: password, // En producción esto debería estar hasheado
+        user: newUser
+      })
+      localStorage.setItem("mockUsers", JSON.stringify(users))
+
       toast.success("¡Cuenta creada exitosamente!")
       toast.info("Ahora puedes iniciar sesión", {
         description: "Usa tus credenciales para acceder",
       })
+      
+      // Limpiar formulario y cambiar a login
       setShowRegister(false)
       setEmail("")
       setPassword("")
       setName("")
       setConfirmPassword("")
-    } catch (error) {
-      toast.error("Error al crear cuenta")
-    } finally {
+      setRole("chef")
+      setIsLoading(false)
+    } catch (error: any) {
+      console.error("Registration error:", error)
+      toast.error("Error al crear cuenta", {
+        description: "Por favor intenta nuevamente",
+      })
       setIsLoading(false)
     }
   }
 
-  const handleGoogleLogin = () => {
-    // Simulated Google login
-    toast.info("Login con Google", {
-      description: "Esta función estará disponible pronto",
-    })
-  }
-
-  const handleWhatsAppLogin = () => {
-    // Simulated WhatsApp verification
-    toast.info("Verificación por WhatsApp", {
-      description: "Esta función estará disponible pronto",
-    })
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#1000a3] to-[#2000c3]">
-      <CustomerHeader />
-      <main className="max-w-2xl mx-auto px-4 py-12">
-        <div className="bg-white rounded-lg shadow-2xl p-8">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-[#1000a3] mb-2">
-              {showRegister ? "Crear Cuenta" : "Inicia Sesión"}
+    <div className={`min-h-screen relative overflow-hidden flex justify-center items-center font-sans ${montserrat.className}`}>
+      
+      {/* ESTILOS CSS INYECTADOS */}
+      <style jsx global>{`
+        /* Fondo base (azul) */
+        .bg-base {
+          background: url('/fondo_login.png') no-repeat center center/cover;
+          transition: filter 0.8s ease-in-out;
+        }
+
+        /* Animación suave */
+        .cubic-bezier {
+            transition-timing-function: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+
+        /* Vidrio Oscuro para el Registro */
+        .glass-panel-dark {
+            background: rgba(16, 20, 40, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        
+        /* Inputs del Registro (Dark Glass) */
+        .input-dark-glass {
+            background: rgba(255,255,255,0.05) !important;
+            border: 1px solid rgba(255,255,255,0.2) !important;
+            color: white !important;
+            transition: all 0.3s ease;
+        }
+        .input-dark-glass:focus {
+            border-color: white !important;
+            background: rgba(255,255,255,0.1) !important;
+        }
+        .input-dark-glass::placeholder { color: rgba(255,255,255,0.5); }
+
+        /* NUEVO: Clase específica para los Inputs del Login (Píldora Transparente) */
+        .input-pill-transparent {
+            background: transparent !important;
+            border: 2px solid white !important; /* Borde blanco sólido */
+            border-radius: 9999px !important; /* Forma de píldora completa */
+            color: white !important;
+            padding-left: 1.5rem !important; /* Espacio interior */
+            padding-right: 1.5rem !important;
+            height: 3.5rem !important; /* Altura cómoda */
+            transition: all 0.3s ease;
+        }
+        .input-pill-transparent:focus {
+            background: rgba(255, 255, 255, 0.1) !important; /* Ligero fondo al escribir */
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+        }
+        .input-pill-transparent::placeholder {
+            color: rgba(255, 255, 255, 0.9) !important; /* Placeholder bien visible */
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 1px;
+        }
+      `}</style>
+
+      {/* Capa de fondo oscura que se activa en registro */}
+      <div className={`absolute inset-0 z-0 bg-base transition-all duration-1000 ${showRegister ? 'brightness-50' : 'brightness-100'}`} />
+
+      {/* LOGO SVG */}
+      <div className="absolute top-8 left-10 z-50">
+        <img 
+          src="/logo-200millas.svg" 
+          alt="Logo 200 Millas" 
+          className="w-40 drop-shadow-lg" 
+        />
+      </div>
+
+      {/* CONTENEDOR PRINCIPAL */}
+      <div className="relative w-full max-w-[1200px] h-screen flex justify-center items-center">
+
+        {/* --- IMAGEN DEL CEVICHE --- */}
+        <img
+            src="/DAP-Photoroom.png"
+            alt="Ceviche"
+            className={`
+                absolute z-20 transition-all duration-1000 cubic-bezier drop-shadow-2xl
+                ${showRegister 
+                    ? 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 scale-90 opacity-100' 
+                    : 'left-[5%] top-1/2 -translate-y-1/2 scale-90 opacity-100 w-[45%] max-w-[550px]'
+                }
+            `}
+        />
+
+        {/* --- FORMULARIO LOGIN (DERECHA - ESTILO ACTUALIZADO) --- */}
+        <div className={`
+            absolute z-30 p-10 w-[400px] transition-all duration-700 ease-in-out
+            ${showRegister 
+                ? 'opacity-0 translate-x-20 pointer-events-none' 
+                : 'right-[10%] opacity-100 translate-x-0'
+            }
+        `}>
+            {/* Título centrado */}
+            <h1 className={`${greatVibes.className} text-6xl text-white mb-2 font-normal drop-shadow-md text-center`}>
+                Iniciar sesión
             </h1>
-            <p className="text-gray-600">
-              {showRegister ? "Únete a 200 Millas" : "Accede a tu cuenta"}
+            <p className="text-center text-white/80 mb-8 text-sm uppercase tracking-wider">
+                Llevando lo mejor del mar a cada hogar
             </p>
-          </div>
-
-          {!showRegister ? (
+            
             <form onSubmit={handleLogin} className="space-y-6">
-              <div>
-                <Label htmlFor="email">Correo electrónico</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="tu@email.com"
-                  required
-                  className="mt-2"
+                {/* Inputs estilo Píldora Transparente */}
+                <input
+                    type="email"
+                    placeholder="Correo Electrónico"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full input-pill-transparent outline-none"
                 />
-              </div>
-
-              <div>
-                <div className="flex justify-between">
-                  <Label htmlFor="password">Contraseña</Label>
-                  <a href="#" className="text-sm text-[#1000a3] hover:underline">
-                    ¿Olvidaste tu contraseña?
-                  </a>
-                </div>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="mt-2"
+                <input
+                    type="password"
+                    placeholder="Contraseña"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full input-pill-transparent outline-none"
                 />
-              </div>
-
-              <Button
-                type="submit"
-                disabled={isLoading}
-                className="w-full bg-[#e2e200] text-[#1000a3] hover:bg-[#e2e200]/90 font-bold text-lg py-6"
-              >
-                {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
-              </Button>
+                
+                <Button 
+                    type="submit" 
+                    disabled={isLoading}
+                    className="w-full bg-white text-[#1000a3] hover:bg-white/90 rounded-full py-7 font-bold text-lg mt-4 shadow-lg transition-transform hover:scale-105 tracking-wide"
+                >
+                    {isLoading ? "Iniciando..." : "INICIAR SESIÓN"}
+                </Button>
             </form>
-          ) : (
-            <form onSubmit={handleRegister} className="space-y-6">
-              <div>
-                <Label htmlFor="name">Nombre completo</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Juan Pérez"
-                  required
-                  className="mt-2"
-                />
-              </div>
 
-              <div>
-                <Label htmlFor="email">Correo electrónico</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="tu@email.com"
-                  required
-                  className="mt-2"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="password">Contraseña</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="mt-2"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="confirmPassword">Confirmar contraseña</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="mt-2"
-                />
-              </div>
-
-              <Button
-                type="submit"
-                disabled={isLoading}
-                className="w-full bg-[#e2e200] text-[#1000a3] hover:bg-[#e2e200]/90 font-bold text-lg py-6"
-              >
-                {isLoading ? "Creando cuenta..." : "Crear Cuenta"}
-              </Button>
-            </form>
-          )}
-
-          {/* Divider */}
-          <div className="flex items-center my-6">
-            <div className="flex-1 border-t"></div>
-            <span className="px-4 text-sm text-gray-500">O</span>
-            <div className="flex-1 border-t"></div>
-          </div>
-
-          {/* Social Login */}
-          <div className="space-y-3">
-            <Button
-              onClick={handleGoogleLogin}
-              variant="outline"
-              className="w-full border-2 border-gray-300 hover:bg-gray-50"
-            >
-              <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                />
-              </svg>
-              Continuar con Google
-            </Button>
-
-            <Button
-              onClick={handleWhatsAppLogin}
-              variant="outline"
-              className="w-full border-2 border-gray-300 hover:bg-gray-50"
-            >
-              <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .808 4.5.007 10.184a11.717 11.717 0 003.285 11.689l-4.067 14.849 15.195-4.068a11.773 11.773 0 005.867 1.55h.005c6.554 0 11.918-5.342 12.545-12.063.616-6.616-4.846-12.404-11.456-12.404Z"/>
-              </svg>
-              Continuar con WhatsApp
-            </Button>
-          </div>
-
-          {/* Register Link */}
-          <div className="mt-6 text-center">
-            {!showRegister ? (
-              <p className="text-gray-600">
+            <p className="text-white/80 mt-8 text-center text-sm">
                 ¿No tienes una cuenta?{" "}
-                <button
-                  onClick={() => setShowRegister(true)}
-                  className="text-[#1000a3] hover:underline font-semibold"
-                >
-                  Regístrate aquí
+                <button onClick={() => setShowRegister(true)} className="text-white font-bold hover:underline cursor-pointer ml-1">
+                    Regístrate aquí
                 </button>
-              </p>
-            ) : (
-              <p className="text-gray-600">
-                ¿Ya tienes una cuenta?{" "}
-                <button
-                  onClick={() => setShowRegister(false)}
-                  className="text-[#1000a3] hover:underline font-semibold"
-                >
-                  Inicia sesión
-                </button>
-              </p>
-            )}
-          </div>
+            </p>
         </div>
-      </main>
-      <CustomerFooter />
+
+        {/* --- FORMULARIO REGISTRO (CENTRO - DARK GLASS) --- */}
+        <div className={`
+            absolute z-40 p-10 w-[450px] rounded-[30px] glass-panel-dark transition-all duration-700 ease-in-out
+            flex flex-col items-center
+            ${showRegister 
+                ? 'opacity-100 scale-100 translate-y-0' 
+                : 'opacity-0 scale-90 translate-y-10 pointer-events-none'
+            }
+        `}>
+            <h1 className={`${greatVibes.className} text-5xl text-white mb-6 font-normal drop-shadow-md`}>
+                Registro
+            </h1>
+
+            <form onSubmit={handleRegister} className="w-full space-y-4">
+                <Input
+                    placeholder="NOMBRE COMPLETO"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="input-dark-glass rounded-full py-5 px-6"
+                />
+                <Input
+                    placeholder="CORREO ELECTRÓNICO"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="input-dark-glass rounded-full py-5 px-6"
+                />
+                
+                <Select value={role} onValueChange={setRole}>
+                    <SelectTrigger className="input-dark-glass rounded-full py-5 px-6 w-full text-white">
+                        <SelectValue placeholder="SELECCIONA ROL" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="chef">👨‍🍳 Chef</SelectItem>
+                        <SelectItem value="repartidor">🚗 Repartidor</SelectItem>
+                    </SelectContent>
+                </Select>
+
+                <Input
+                    type="password"
+                    placeholder="CONTRASEÑA"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="input-dark-glass rounded-full py-5 px-6"
+                />
+                <Input
+                    type="password"
+                    placeholder="CONFIRMAR CONTRASEÑA"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="input-dark-glass rounded-full py-5 px-6"
+                />
+
+                <Button 
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full bg-white text-[#1000a3] hover:bg-gray-100 rounded-full py-6 font-bold mt-4 shadow-lg transition-transform hover:scale-105"
+                >
+                    {isLoading ? "Creando..." : "CREAR CUENTA"}
+                </Button>
+            </form>
+
+            <p className="text-white/60 mt-4 text-sm">
+                ¿Ya tienes una cuenta?{" "}
+                <button onClick={() => setShowRegister(false)} className="text-white font-bold hover:underline cursor-pointer ml-1">
+                    Inicia sesión
+                </button>
+            </p>
+        </div>
+
+      </div>
     </div>
   )
 }

@@ -21,16 +21,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // Check if user is already logged in
-    const storedUser = localStorage.getItem("user")
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser))
-      } catch (error) {
-        console.error("Error parsing stored user:", error)
-        localStorage.removeItem("user")
+    const checkUser = () => {
+      const storedUser = localStorage.getItem("user")
+      if (storedUser) {
+        try {
+          setUser(JSON.parse(storedUser))
+        } catch (error) {
+          console.error("Error parsing stored user:", error)
+          localStorage.removeItem("user")
+        }
+      }
+      setIsLoading(false)
+    }
+
+    checkUser()
+
+    // Escuchar cambios en localStorage (para cuando se actualiza desde otros componentes)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "user") {
+        checkUser()
       }
     }
-    setIsLoading(false)
+
+    // Escuchar evento personalizado de storage
+    const handleCustomStorageChange = () => {
+      checkUser()
+    }
+
+    window.addEventListener("storage", handleStorageChange)
+    window.addEventListener("storage", handleCustomStorageChange)
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange)
+      window.removeEventListener("storage", handleCustomStorageChange)
+    }
   }, [])
 
   const login = async (email: string, password: string) => {

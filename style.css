@@ -1,0 +1,216 @@
+/* style.css */
+
+* {
+    margin: 0; 
+    padding: 0; 
+    box-sizing: border-box;
+    font-family: 'Montserrat', sans-serif;
+}
+
+body {
+    height: 100vh;
+    overflow: hidden; 
+    /* Fondo inicial para Login */
+    background: url('fondo_login.png') no-repeat center center/cover; 
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: background 0.8s ease-in-out;
+}
+
+/* Fondo para modo registro: fondo_login.png encima y DAP-Photoroom.png debajo */
+body.modo-registro {
+    background: 
+        url('fondo_login.png') no-repeat center center/cover,
+        url('DAP-Photoroom.png') no-repeat center center/cover;
+    background-blend-mode: overlay;
+}
+
+.logo {
+    position: fixed;
+    top: 30px; 
+    left: 40px;
+    z-index: 100;
+}
+
+.main-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    max-width: 1200px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* --- ESTILOS COMUNES --- */
+.script-font {
+    font-family: 'Great Vibes', cursive;
+    font-size: 3.5rem; 
+    color: white; 
+    margin-bottom: 20px; 
+    font-weight: 400;
+}
+
+a { 
+    text-decoration: none; 
+    font-weight: bold; 
+    color: white; 
+    transition: 0.3s; 
+}
+
+p { 
+    color: rgba(255,255,255,0.8); 
+    margin-top: 20px; 
+    font-size: 0.9rem; 
+}
+
+/* --- LA IMAGEN DEL CEVICHE --- */
+.ceviche-image {
+    position: absolute;
+    z-index: 5;
+    /* ESTADO INICIAL (LOGIN) */
+    left: 10%; 
+    width: 45%; 
+    max-width: 600px;
+    height: auto;
+    transition: all 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    filter: drop-shadow(0px 15px 15px rgba(0, 0, 0, 0.4));
+}
+
+/* --- LOS FORMULARIOS --- */
+.form-container {
+    position: absolute;
+    z-index: 10;
+    width: 400px;
+    padding: 40px;
+    transition: all 0.6s ease-in-out;
+}
+
+/* Estado inicial del LOGIN */
+.login-form {
+    right: 10%;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+}
+
+/* Estado inicial del REGISTRO */
+.register-form {
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(0.9);
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* =========================================
+   ESTADO "MODO REGISTRO" (Activado por JS)
+   ========================================= */
+.main-container.modo-registro .ceviche-image {
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(1.3);
+    z-index: 8;
+}
+
+.main-container.modo-registro .login-form {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(50px);
+}
+
+.main-container.modo-registro .register-form {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1);
+    z-index: 15;
+}
+
+/* --- ESTILOS DE LOS INPUTS --- */
+.input-line {
+    width: 100%; 
+    background: transparent; 
+    border: none; 
+    border-bottom: 1px solid rgba(255,255,255,0.5);
+    padding: 15px 0; 
+    color: white; 
+    margin-bottom: 20px; 
+    outline: none;
+}
+
+.input-line::placeholder { 
+    color: rgba(255,255,255,0.7); 
+}
+
+.glass-effect {
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(15px);
+    border-radius: 25px;
+    border: 1px solid rgba(255,255,255,0.3);
+    box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+    color: #333;
+}
+
+.glass-effect .script-font { 
+    color: #333; 
+}
+
+.input-box, .select-box {
+    width: 100%; 
+    background: rgba(255,255,255,0.5); 
+    border: 1px solid white;
+    border-radius: 30px; 
+    padding: 12px 20px; 
+    margin-bottom: 15px; 
+    color: #333; 
+    outline: none;
+}
+
+.input-box::placeholder { 
+    color: #666; 
+}
+
+.select-box { 
+    display: flex; 
+    justify-content: space-between; 
+    cursor: pointer; 
+    color: #666;
+}
+
+.btn-light {
+    width: 100%; 
+    padding: 15px; 
+    border-radius: 30px; 
+    border: none; 
+    background: white;
+    color: #333; 
+    font-weight: bold; 
+    cursor: pointer; 
+    margin-top: 10px; 
+    transition: 0.3s;
+}
+
+.btn-light:hover { 
+    transform: scale(1.05); 
+    box-shadow: 0 10px 20px rgba(0,0,0,0.2); 
+}
+
+@media (max-width: 768px) {
+    .ceviche-image { 
+        left: 50%; 
+        transform: translateX(-50%); 
+        top: 15%; 
+        width: 80%; 
+    }
+    .login-form { 
+        right: auto; 
+        left: 50%; 
+        top: 60%; 
+        transform: translate(-50%, -50%); 
+        width: 90%; 
+    }
+    .main-container.modo-registro .ceviche-image { 
+        transform: translate(-50%, -50%) scale(1.1); 
+    }
+}

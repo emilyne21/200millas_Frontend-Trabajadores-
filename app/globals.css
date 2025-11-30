@@ -1,6 +1,29 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Blur en los bordes de las imágenes de fondo */
+.background-blur {
+  position: relative;
+}
+
+.background-blur::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.background-blur > * {
+  position: relative;
+  z-index: 1;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
@@ -192,4 +215,221 @@
 input[type="search"]::-webkit-search-cancel-button {
   -webkit-appearance: none;
   appearance: none;
+}
+
+/* Estilo para el título de login */
+.titulo-login {
+  font-family: 'Great Vibes', cursive;
+  font-weight: 400;
+  font-size: 4rem;
+}
+
+/* Animación de la imagen del ceviche */
+.ceviche-animated {
+  position: absolute;
+  z-index: 1;
+  transition: all 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  pointer-events: none;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.ceviche-animated .ceviche-image {
+  filter: drop-shadow(0px 15px 15px rgba(0, 0, 0, 0.4));
+  transition: all 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  display: block !important;
+  width: 100%;
+  height: auto;
+}
+
+/* Estado inicial - Login: imagen a la izquierda */
+.ceviche-animated.login-mode {
+  left: 10%;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 400px;
+  max-width: 45vw;
+}
+
+.ceviche-animated.login-mode .ceviche-image {
+  width: 100%;
+  height: auto;
+  max-height: 600px;
+  object-fit: contain;
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* Estado activo - Registro: imagen al centro y agrandada */
+.ceviche-animated.register-mode {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  width: 500px;
+  max-width: 50vw;
+}
+
+.ceviche-animated.register-mode .ceviche-image {
+  width: 100%;
+  height: auto;
+  max-height: 700px;
+  object-fit: contain;
+  transform: scale(1.2);
+  opacity: 0.7;
+}
+
+/* Asegurar visibilidad en móviles también */
+@media (max-width: 1024px) {
+  .ceviche-animated {
+    display: block !important;
+  }
+  
+  .ceviche-animated.login-mode {
+    width: 300px;
+    max-width: 40vw;
+  }
+  
+  .ceviche-animated.register-mode {
+    width: 350px;
+    max-width: 60vw;
+  }
+}
+
+/* Asegurar que el formulario esté por encima cuando está en modo registro */
+.form-container.register-mode {
+  position: relative;
+  z-index: 10;
+}
+
+/* Logo superior */
+.logo-superior {
+  position: absolute;
+  top: 30px;
+  left: 40px;
+  width: 150px;
+  z-index: 10;
+}
+
+.logo-superior img {
+  width: 100%;
+}
+
+/* Logo para modo registro */
+.logo {
+  position: absolute;
+  top: 30px;
+  left: 40px;
+  width: 150px;
+  z-index: 10;
+}
+
+/* La Tarjeta de Registro */
+.register-card {
+  width: 450px;
+  padding: 40px;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 20;
+}
+
+/* Mantener login-card para compatibilidad */
+.login-card {
+  width: 450px;
+  max-width: 95%;
+  padding: 40px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 20px;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Tipografía */
+.titulo-registro {
+  font-family: 'Great Vibes', cursive;
+  color: white;
+  font-size: 3.5rem;
+  margin-bottom: 30px;
+  font-weight: 400;
+}
+
+/* Inputs */
+.input-box, .select-box {
+  width: 100%;
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  background: transparent;
+  border: 1px solid white;
+  border-radius: 25px;
+  color: white;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.input-box::placeholder {
+  color: #ddd;
+}
+
+.select-box {
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+  align-items: center;
+}
+
+/* Botón */
+.btn-crear {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  background: white;
+  color: #333;
+  border: none;
+  border-radius: 25px;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: 0.3s;
+}
+
+.btn-crear:hover {
+  transform: scale(1.02);
+}
+
+.footer-text {
+  margin-top: 20px;
+  color: #ddd;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.footer-text a {
+  color: white;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+/* Estilos para el contenedor de login/registro */
+.login-container {
+  transition: all 0.3s ease;
+}
+
+/* Estilo para el formulario de login con efecto glassmorphism */
+.form-side {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
 }

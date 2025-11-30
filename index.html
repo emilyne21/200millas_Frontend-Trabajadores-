@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>200 Millas Login/Registro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="logo">
+        <h2 style="color:white;">200MILLAS</h2> 
+    </div>
+    <div class="main-container" id="mainContainer">
+        
+        <img src="DAP-Photoroom.png" alt="Ceviche 200 Millas" class="ceviche-image">
+
+        <div class="form-container login-form">
+            <h2 class="script-font">Iniciar sesión</h2>
+            <form>
+                <input type="email" placeholder="CORREO ELECTRÓNICO" class="input-line">
+                <input type="password" placeholder="CONTRASEÑA" class="input-line">
+                <button type="button" class="btn-light">INICIAR SESIÓN</button>
+            </form>
+            <p>¿No tienes una cuenta? <a href="#" id="btnIrARegistro">Regístrate aquí</a></p>
+        </div>
+
+        <div class="form-container register-form glass-effect">
+            <h2 class="script-font">Registro</h2>
+            <form>
+                <input type="text" placeholder="NOMBRE COMPLETO" class="input-box">
+                <input type="email" placeholder="CORREO ELECTRÓNICO" class="input-box">
+                <div class="select-box">👨‍🍳 Chef ▼</div>
+                <input type="password" placeholder="CONTRASEÑA" class="input-box">
+                <input type="password" placeholder="CONFIRMAR CONTRASEÑA" class="input-box">
+                <button type="button" class="btn-light">CREAR CUENTA</button>
+            </form>
+            <p style="color: #333;">¿Ya tienes una cuenta? <a href="#" id="btnIrALogin" style="color:#000;">Inicia sesión</a></p>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
