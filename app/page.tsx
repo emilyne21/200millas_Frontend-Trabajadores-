@@ -50,7 +50,7 @@ export default function HomePage() {
       const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery") || userRole === "driver"
       
       if (isChef) {
-        // Datos mock Chef (Igual que antes)
+        // Datos mock Chef (Pedidos activos)
         setOrders([
           {
             id: "ORD001", customer: "Juan Pérez", phone: "+51 999 888 777", status: "pending", createdAt: new Date().toISOString(),
@@ -94,6 +94,29 @@ export default function HomePage() {
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     const userRole = user?.role?.toLowerCase() || ""
     const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery") || userRole === "driver"
+    const isChef = userRole === "cook" || userRole.includes("chef") || userRole.includes("cocina")
+    
+    // Lógica para cocinero: marcar como listo
+    if (isChef && newStatus === "ready") {
+      const selectedOrder = orders.find((order: any) => order.id === orderId)
+      if (selectedOrder) {
+        setOrders(orders.filter((order: any) => order.id !== orderId))
+        setStats({ ...stats, pending: stats.pending - (selectedOrder.status === "pending" ? 1 : 0), cooking: stats.cooking - (selectedOrder.status === "cooking" ? 1 : 0), ready: stats.ready + 1 })
+      }
+    }
+    
+    // Lógica para cocinero: cambiar de pending a cooking
+    if (isChef && newStatus === "cooking") {
+      setOrders(orders.map((order: any) => 
+        order.id === orderId 
+          ? { ...order, status: "cooking", timeElapsed: 0 }
+          : order
+      ))
+      const order = orders.find((o: any) => o.id === orderId)
+      if (order && order.status === "pending") {
+        setStats({ ...stats, pending: stats.pending - 1, cooking: stats.cooking + 1 })
+      }
+    }
     
     // Lógica para mover de "Listos" a "En Tránsito"
     if (isDelivery && newStatus === "dispatched") {
@@ -289,39 +312,58 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* --- VISTA CHEF (Mantenida simple para referencia) --- */}
+        {/* --- VISTA CHEF --- */}
         {isChef && (
-             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* Ejemplo de tarjeta estilo Smartech para Chef */}
+          <div>
+            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+              <Flame className="w-6 h-6 text-[#E85234]" />
+              Pedidos Activos
+            </h2>
+            {orders.length === 0 ? (
+              <Card className="border-none shadow-none bg-[#96ADD6]/20 rounded-3xl h-48 flex items-center justify-center border-2 border-dashed border-[#96ADD6]">
+                <div className="text-center opacity-60">
+                  <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-[#00408C]" />
+                  <p>No hay pedidos activos</p>
+                </div>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {orders.map(order => (
-                    <Card key={order.id} className="border-none shadow-md rounded-[2rem] bg-white relative overflow-hidden">
-                        <div className={`absolute left-0 top-0 w-2 h-full ${order.status === 'cooking' ? 'bg-[#E85234]' : 'bg-[#96ADD6]'}`}></div>
-                        <CardContent className="p-6 pl-8">
-                             <div className="flex justify-between mb-2">
-                                <span className="text-sm font-bold text-[#00408C]/50">MESA / CLIENTE</span>
-                                <span className="font-mono text-[#E85234] font-bold">{order.estimatedTime}m</span>
-                             </div>
-                             <h3 className="text-xl font-bold text-[#00408C] mb-4">{order.customer}</h3>
-                             <div className="space-y-2 mb-6">
-                                {order.items.map((item: any, idx: number) => (
-                                    <div key={idx} className="flex justify-between items-center border-b border-[#F2EEE9] pb-1">
-                                        <span className="font-medium text-[#00408C]">{item.name}</span>
-                                        <Badge variant="outline" className="border-[#00408C]/20 text-[#00408C]">x{item.qty}</Badge>
-                                    </div>
-                                ))}
-                             </div>
-                             <div className="flex gap-2">
-                                <Button className="flex-1 bg-[#F2EEE9] text-[#00408C] hover:bg-[#e6dfd6] rounded-xl font-bold border-none">
-                                    Detalles
-                                </Button>
-                                <Button className={`flex-1 rounded-xl font-bold border-none text-white ${order.status === 'cooking' ? 'bg-[#E85234] hover:bg-[#E85234]/90' : 'bg-[#00408C] hover:bg-[#00408C]/90'}`}>
-                                    {order.status === 'cooking' ? 'Terminar' : 'Cocinar'}
-                                </Button>
-                             </div>
-                        </CardContent>
-                    </Card>
+                  <Card key={order.id} className="border-none shadow-md rounded-[2rem] bg-white relative overflow-hidden">
+                    <div className={`absolute left-0 top-0 w-2 h-full ${order.status === 'cooking' ? 'bg-[#E85234]' : 'bg-[#96ADD6]'}`}></div>
+                    <CardContent className="p-6 pl-8">
+                      <div className="flex justify-between mb-2">
+                        <span className="text-sm font-bold text-[#00408C]/50">MESA / CLIENTE</span>
+                        <span className="font-mono text-[#E85234] font-bold">{order.estimatedTime}m</span>
+                      </div>
+                      <h3 className="text-xl font-bold text-[#00408C] mb-4">{order.customer}</h3>
+                      <div className="space-y-2 mb-6">
+                        {order.items.map((item: any, idx: number) => (
+                          <div key={idx} className="flex justify-between items-center border-b border-[#F2EEE9] pb-1">
+                            <span className="font-medium text-[#00408C]">{item.name}</span>
+                            <Badge variant="outline" className="border-[#00408C]/20 text-[#00408C]">x{item.qty}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <Link href={`/pedidos/${order.id}`} className="flex-1">
+                          <Button className="w-full bg-[#F2EEE9] text-[#00408C] hover:bg-[#e6dfd6] rounded-xl font-bold border-none">
+                            Detalles
+                          </Button>
+                        </Link>
+                        <Button 
+                          className={`flex-1 rounded-xl font-bold border-none text-white ${order.status === 'cooking' ? 'bg-[#E85234] hover:bg-[#E85234]/90' : 'bg-[#00408C] hover:bg-[#00408C]/90'}`}
+                          onClick={() => updateOrderStatus(order.id, order.status === 'cooking' ? 'ready' : 'cooking')}
+                        >
+                          {order.status === 'cooking' ? 'Terminar' : 'Cocinar'}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
                 ))}
-             </div>
+              </div>
+            )}
+          </div>
         )}
 
       </main>

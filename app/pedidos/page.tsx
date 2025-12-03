@@ -45,6 +45,13 @@ export default function PedidosPage() {
         { value: "dispatched", label: "En Ruta" },
         { value: "delivered", label: "Entregados" }
       ]
+    : isChef
+    ? [
+        { value: "all", label: "Todos" },
+        { value: "ready", label: "Listos" },
+        { value: "dispatched", label: "En Ruta" },
+        { value: "delivered", label: "Entregados" }
+      ]
     : [
         { value: "all", label: "Todos" },
         { value: "pending", label: "Pendientes" },
@@ -88,20 +95,42 @@ export default function PedidosPage() {
             items: [{ qty: 3, name: "Pollo a la Brasa" }], total: 42.00
           }
         ])
+      } else if (isChef) {
+         // DATOS MOCK CHEF - Pedidos completados (Mis Pedidos)
+         setOrders([
+            {
+              id: "ORD010", restaurant: "200 Millas", status: "ready",
+              deliveryAddress: "Mesa 5", estimatedTime: null,
+              createdAt: new Date(Date.now() - 3600000).toISOString(), customer: "Carlos Mendoza", phone: "+51 999 111 222",
+              items: [{ qty: 1, name: "Ceviche Mixto" }, { qty: 2, name: "Chicha Morada" }], total: 42.00
+            },
+            {
+              id: "ORD009", restaurant: "200 Millas", status: "dispatched",
+              deliveryAddress: "Mesa 12", estimatedTime: null,
+              createdAt: new Date(Date.now() - 7200000).toISOString(), customer: "Ana López", phone: "+51 999 333 444",
+              items: [{ qty: 2, name: "Arroz con Mariscos" }, { qty: 1, name: "Tiradito" }], total: 55.50
+            },
+            {
+              id: "ORD008", restaurant: "200 Millas", status: "delivered",
+              deliveryAddress: "Mesa 3", estimatedTime: null,
+              createdAt: new Date(Date.now() - 10800000).toISOString(), customer: "Roberto Silva", phone: "+51 999 555 666",
+              items: [{ qty: 1, name: "Lomo Saltado" }, { qty: 1, name: "Causa Limeña" }], total: 38.00
+            },
+            {
+              id: "ORD007", restaurant: "200 Millas", status: "ready",
+              deliveryAddress: "Mesa 7", estimatedTime: null,
+              createdAt: new Date(Date.now() - 5400000).toISOString(), customer: "Laura Fernández", phone: "+51 999 777 888",
+              items: [{ qty: 1, name: "Ceviche Clásico" }], total: 28.00
+            }
+         ])
       } else {
-         // DATOS MOCK CHEF
+         // Otros roles
          setOrders([
             {
               id: "ORD001", restaurant: "200 Millas", status: "pending",
               deliveryAddress: "Mesa 4", estimatedTime: "15 min",
               createdAt: new Date().toISOString(), customer: "Juan Pérez", phone: "+51 999 888 777",
               items: [{ qty: 2, name: "Ceviche Clásico" }, { qty: 1, name: "Arroz con Mariscos" }], total: 45.50
-            },
-            {
-              id: "ORD002", restaurant: "200 Millas", status: "cooking",
-              deliveryAddress: "Mesa 8", estimatedTime: "12 min",
-              createdAt: new Date(Date.now() - 300000).toISOString(), customer: "María García", phone: "+51 999 777 666",
-              items: [{ qty: 1, name: "Lomo Saltado" }, { qty: 2, name: "Causa Limeña" }], total: 38.00
             }
          ])
       }

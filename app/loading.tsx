@@ -12,7 +12,7 @@ export default function Loading() {
                 Si gira muy rápido, puedes usar una clase personalizada o 'animate-pulse'.
              */}
              <img 
-               src="/loguito-200millas.png" 
+               src="/loguito-200millas-Photoroom.png" 
                alt="Cargando"
                className="w-full h-full object-contain animate-spin" 
                style={{ animationDuration: '3s' }} // Hacemos que gire más lento y elegante

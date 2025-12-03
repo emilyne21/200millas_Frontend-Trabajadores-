@@ -52,12 +52,19 @@ export default function MapPage() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
 
   const userRole = user?.role?.toLowerCase() || ""
-  const isChef = userRole === "cook" || userRole.includes("chef") 
-  const isDelivery = userRole.includes("repartidor") || userRole === "driver"
+  const isChef = userRole === "cook" || userRole.includes("chef") || userRole.includes("cocina")
+  const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery") || userRole === "driver"
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) router.push("/login")
   }, [isAuthenticated, isLoading, router])
+
+  // Redirigir cocineros a la página principal - solo repartidores pueden ver el mapa
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && !isDelivery) {
+      router.push("/")
+    }
+  }, [isLoading, isAuthenticated, isDelivery, router])
 
   // 1. Cargar Datos Mock
   useEffect(() => {
@@ -177,7 +184,7 @@ export default function MapPage() {
   }, [loading, apiKey, initMap])
 
   // PANTALLA DE CARGA
-  if (loading) {
+  if (loading || isLoading) {
     return (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#F2EEE9]">
           <div className="flex items-center gap-4">
@@ -190,6 +197,16 @@ export default function MapPage() {
           </div>
         </div>
     )
+  }
+
+  // Si no está autenticado, no mostrar nada (se redirige en useEffect)
+  if (!isAuthenticated) {
+    return null
+  }
+
+  // Si no es repartidor, no mostrar nada (se redirige en useEffect)
+  if (!isDelivery) {
+    return null
   }
 
   return (

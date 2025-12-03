@@ -36,8 +36,8 @@ export default function Header() {
   }
 
   const userRole = user?.role?.toLowerCase() || ""
-  const isChef = userRole.includes("chef") || userRole.includes("cocina")
-  const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery")
+  const isChef = userRole === "cook" || userRole.includes("chef") || userRole.includes("cocina")
+  const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery") || userRole === "driver"
 
   const getRoleIcon = () => {
     if (isChef) return <ChefHat className="w-5 h-5" />
@@ -78,22 +78,22 @@ export default function Header() {
               <LayoutDashboard className="w-4 h-4" />
               Dashboard
             </Link>
-            {!isChef && (
-              <Link 
-                href="/pedidos" 
-                className="flex items-center gap-2 hover:text-[#e2e200] transition font-medium px-3 py-2 rounded-md hover:bg-white/10"
-              >
-                <Package className="w-4 h-4" />
-                Mis Pedidos
-              </Link>
-            )}
             <Link 
-              href="/dashboard" 
+              href="/pedidos" 
               className="flex items-center gap-2 hover:text-[#e2e200] transition font-medium px-3 py-2 rounded-md hover:bg-white/10"
             >
-              <MapPin className="w-4 h-4" />
-              Mapa
+              <Package className="w-4 h-4" />
+              Mis Pedidos
             </Link>
+            {isDelivery && (
+              <Link 
+                href="/dashboard" 
+                className="flex items-center gap-2 hover:text-[#e2e200] transition font-medium px-3 py-2 rounded-md hover:bg-white/10"
+              >
+                <MapPin className="w-4 h-4" />
+                Mapa
+              </Link>
+            )}
           </nav>
 
           {/* User Info and Logout */}
@@ -139,24 +139,24 @@ export default function Header() {
               <LayoutDashboard className="w-5 h-5" />
               Dashboard
             </Link>
-            {!isChef && (
-              <Link 
-                href="/pedidos" 
-                className="flex items-center gap-3 text-white hover:text-[#e2e200] px-4 py-3 hover:bg-white/10 transition"
-                onClick={() => setIsOpen(false)}
-              >
-                <Package className="w-5 h-5" />
-                Mis Pedidos
-              </Link>
-            )}
             <Link 
-              href="/dashboard" 
+              href="/pedidos" 
               className="flex items-center gap-3 text-white hover:text-[#e2e200] px-4 py-3 hover:bg-white/10 transition"
               onClick={() => setIsOpen(false)}
             >
-              <MapPin className="w-5 h-5" />
-              Mapa
+              <Package className="w-5 h-5" />
+              Mis Pedidos
             </Link>
+            {isDelivery && (
+              <Link 
+                href="/dashboard" 
+                className="flex items-center gap-3 text-white hover:text-[#e2e200] px-4 py-3 hover:bg-white/10 transition"
+                onClick={() => setIsOpen(false)}
+              >
+                <MapPin className="w-5 h-5" />
+                Mapa
+              </Link>
+            )}
             <div className="px-4 py-3 border-t border-white/20 mt-2">
               <div className="mb-3">
                 <p className="text-sm font-medium text-white mb-1">{user?.name || "Trabajador"}</p>
