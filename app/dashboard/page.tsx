@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
+// Asegúrate de importar tu cliente API aquí. Ajusta la ruta si es diferente.
+import { apiClient } from "@/lib/api" 
 import Header from "@/components/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -22,6 +24,7 @@ const STORE_LOCATIONS = [
   { id: 8, name: "Surco (Benavides)", address: "Av. Benavides 3863, local 1", coords: { lat: -12.1286, lng: -76.9936 }, phone: "996819390" }
 ]
 
+// Diccionario de coordenadas fijas para direcciones conocidas (útil si la API devuelve texto)
 const addressToCoords: Record<string, { lat: number; lng: number }> = {
   "Av. Principal 123, San Isidro": { lat: -12.0960, lng: -77.0330 },
   "Jr. Los Olivos 456, Miraflores": { lat: -12.1200, lng: -77.0300 },
@@ -29,6 +32,7 @@ const addressToCoords: Record<string, { lat: number; lng: number }> = {
   "Calle Mayor 45, San Isidro": { lat: -12.0900, lng: -77.0400 },
 }
 
+// Función helper para obtener coords (o generar random cerca si no existe)
 const geocodeAddress = (address: string) => {
   return addressToCoords[address] || {
     lat: LIMA_CENTER.lat + (Math.random() - 0.5) * 0.02,
@@ -45,54 +49,63 @@ export default function MapPage() {
   const { isAuthenticated, isLoading, user } = useAuth()
   const [orders, setOrders] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [showStores, setShowStores] = useState(false) // Estado para el desplegable
+  const [showStores, setShowStores] = useState(false) 
   const mapRef = useRef<HTMLDivElement>(null)
   const googleMapRef = useRef<any>(null)
   
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
 
-  const userRole = user?.role?.toLowerCase() || ""
-  const isChef = userRole === "cook" || userRole.includes("chef") || userRole.includes("cocina")
+  // --- Lógica de Roles ---
+  const userRole = user?.role?.toLowerCase() || (user as any)?.user_type?.toLowerCase() || ""
+  // const isChef = userRole === "cook" || userRole.includes("chef") || userRole.includes("cocina") // No se usa en esta versión filtrada
   const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery") || userRole === "driver"
 
+  // Redirecciones de Auth
   useEffect(() => {
     if (!isLoading && !isAuthenticated) router.push("/login")
   }, [isAuthenticated, isLoading, router])
 
-  // Redirigir cocineros a la página principal - solo repartidores pueden ver el mapa
   useEffect(() => {
     if (!isLoading && isAuthenticated && !isDelivery) {
       router.push("/")
     }
   }, [isLoading, isAuthenticated, isDelivery, router])
 
-  // 1. Cargar Datos Mock
-  useEffect(() => {
-    if (isAuthenticated) {
-      setLoading(true)
-      setTimeout(() => {
-        const mockOrders = [
-          {
-            id: "ORD005", customer: "Roberto Silva", status: "dispatched",
-            deliveryAddress: "Jr. Los Olivos 456, Miraflores", total: 48.00,
-            driverName: isDelivery ? user?.name : "Luis Ramírez"
-          },
-          {
-             id: "ORD021", customer: "Juan Pérez", status: "dispatched",
-             deliveryAddress: "Calle Mayor 45, San Isidro", total: 45.50,
-             driverName: isDelivery ? user?.name : "Luis Ramírez"
-          },
-          ...(isChef ? [{
-               id: "ORD007", customer: "Carla Diaz", status: "dispatched",
-               deliveryAddress: "Av. Principal 123, San Isidro", total: 120.00,
-               driverName: "Carlos Mendoza"
-          }] : [])
-        ]
-        setOrders(mockOrders)
-        setLoading(false)
-      }, 500)
+
+  // 1. CARGA DE DATOS REALES (Implementación solicitada)
+  const loadOrdersData = useCallback(async () => {
+    setLoading(true)
+    
+    try {
+      console.log("📡 [Map] Cargando pedidos en ruta...")
+      
+      // Usar endpoint específico del driver
+      const data = await apiClient.driver.getAssigned()
+      const ordersArray = Array.isArray(data) ? data : (data.items || data.orders || [])
+      
+      // Filtrar solo los que están en ruta (dispatched)
+      // Nota: Asegúrate de que tu backend devuelve "dispatched" tal cual, o ajusta el string
+      const activeOrders = ordersArray.filter((o: any) => o.status === 'dispatched')
+      
+      setOrders(activeOrders)
+      console.log(`📦 Pedidos en ruta: ${activeOrders.length}`)
+      
+    } catch (err: any) {
+      console.error("❌ Error cargando pedidos:", err)
+      // Fallback a array vacío
+      setOrders([])
+    } finally {
+      setLoading(false)
     }
-  }, [isAuthenticated, isChef, isDelivery, user?.name])
+  }, [])
+
+  // Efecto para llamar a la función de carga
+  useEffect(() => {
+    if (isAuthenticated && isDelivery) {
+        loadOrdersData()
+    }
+  }, [isAuthenticated, isDelivery, loadOrdersData])
+
 
   // 2. Init Map (Memoizado)
   const initMap = useCallback(() => {
@@ -141,11 +154,14 @@ export default function MapPage() {
 
     // B: DIBUJAR PEDIDOS
     orders.forEach((order) => {
+      // Nota: geocodeAddress usa coordenadas aleatorias si la dirección no está en el diccionario hardcodeado.
+      // Idealmente, el backend debería devolver lat/lng para el pedido.
       const coords = geocodeAddress(order.deliveryAddress)
+      
       const marker = new window.google.maps.Marker({
         position: coords,
         map: map,
-        title: order.customer,
+        title: order.customer || `Pedido ${order.id}`,
         icon: {
             path: window.google.maps.SymbolPath.CIRCLE,
             scale: 8,
@@ -156,12 +172,13 @@ export default function MapPage() {
         },
       })
       const infoWindow = new window.google.maps.InfoWindow({
-        content: `<div style="color:#00408C;padding:5px;font-family:sans-serif;"><strong style="font-size:14px;">📦 Entrega: ${order.id}</strong><br/><span style="color:#666;">${order.customer}</span><br/><div style="margin-top:4px;font-size:12px;">📍 ${order.deliveryAddress}</div></div>`
+        content: `<div style="color:#00408C;padding:5px;font-family:sans-serif;"><strong style="font-size:14px;">📦 Entrega: ${order.id}</strong><br/><span style="color:#666;">${order.customer || 'Cliente'}</span><br/><div style="margin-top:4px;font-size:12px;">📍 ${order.deliveryAddress}</div></div>`
       })
       marker.addListener("click", () => infoWindow.open(map, marker))
       bounds.extend(coords)
     })
 
+    // Ajustar vista si hay puntos
     if (orders.length > 0 || STORE_LOCATIONS.length > 0) {
         map.fitBounds(bounds)
     }
@@ -169,6 +186,8 @@ export default function MapPage() {
 
   // 3. Load Script
   useEffect(() => {
+    // Solo cargamos el script si ya dejamos de cargar datos (loading=false) 
+    // y tenemos la API Key.
     if (!loading && apiKey) {
       if (!window.google) {
         const script = document.createElement("script")
@@ -178,6 +197,8 @@ export default function MapPage() {
         script.onload = initMap
         document.head.appendChild(script)
       } else {
+        // Si ya existe google maps, reinicializamos el mapa con los nuevos datos
+        // Un pequeño timeout ayuda a asegurar que el DOM del ref esté listo
         setTimeout(() => initMap(), 100)
       }
     }
@@ -199,15 +220,8 @@ export default function MapPage() {
     )
   }
 
-  // Si no está autenticado, no mostrar nada (se redirige en useEffect)
-  if (!isAuthenticated) {
-    return null
-  }
-
-  // Si no es repartidor, no mostrar nada (se redirige en useEffect)
-  if (!isDelivery) {
-    return null
-  }
+  if (!isAuthenticated) return null
+  if (!isDelivery) return null
 
   return (
     <div className="min-h-screen bg-[#F2EEE9] text-[#00408C]">
@@ -238,7 +252,7 @@ export default function MapPage() {
             {/* 1. COLUMNA IZQUIERDA: Entregas y Locales */}
             <div className="lg:col-span-1 flex flex-col gap-6">
                 
-                {/* A. Entregas Activas (Siempre visible) */}
+                {/* A. Entregas Activas */}
                 <Card className="border-none shadow-none bg-transparent">
                     <CardHeader className="px-0 pt-0 pb-4">
                         <CardTitle className="text-[#00408C] flex items-center gap-2">
@@ -254,6 +268,7 @@ export default function MapPage() {
                                     key={order.id} 
                                     className="bg-white p-4 rounded-[1.5rem] shadow-sm flex items-center gap-4 cursor-pointer hover:shadow-md transition-all border border-transparent hover:border-[#00408C]"
                                     onClick={() => {
+                                        // Usamos el helper de geocode
                                         const coords = geocodeAddress(order.deliveryAddress)
                                         googleMapRef.current?.panTo(coords)
                                         googleMapRef.current?.setZoom(15)
@@ -265,7 +280,7 @@ export default function MapPage() {
                                     <div>
                                         <h4 className="font-bold text-[#00408C] text-base">Pedido {order.id}</h4>
                                         <p className="text-sm text-[#00408C]/70">{order.deliveryAddress}</p>
-                                        <p className="text-xs text-[#E85234] font-bold mt-1">{order.customer}</p>
+                                        <p className="text-xs text-[#E85234] font-bold mt-1">{order.customer || 'Cliente'}</p>
                                     </div>
                                 </div>
                             ))
@@ -273,7 +288,7 @@ export default function MapPage() {
                     </CardContent>
                 </Card>
 
-                {/* B. Nuestros Locales (DESPLEGABLE) */}
+                {/* B. Nuestros Locales */}
                 <Card className="border-none shadow-sm rounded-[1.5rem] bg-white overflow-hidden">
                     <div 
                         className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
@@ -287,7 +302,6 @@ export default function MapPage() {
                         {showStores ? <ChevronUp className="w-5 h-5 text-[#00408C]" /> : <ChevronDown className="w-5 h-5 text-[#00408C]" />}
                     </div>
                     
-                    {/* Contenido Desplegable */}
                     {showStores && (
                         <CardContent className="p-4 pt-0 bg-gray-50/50 border-t border-gray-100 max-h-[400px] overflow-y-auto">
                             <div className="space-y-3 mt-3">
@@ -316,7 +330,7 @@ export default function MapPage() {
 
             </div>
 
-            {/* 2. COLUMNA DERECHA: Mapa (Más grande) */}
+            {/* 2. COLUMNA DERECHA: Mapa */}
             <div className="lg:col-span-2">
                 <Card className="border-none shadow-xl rounded-[2.5rem] overflow-hidden h-[600px] relative bg-white sticky top-24">
                     <div ref={mapRef} className="w-full h-full" />

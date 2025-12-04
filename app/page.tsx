@@ -1,13 +1,14 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
+import { apiClient } from "@/lib/api"
 import Header from "@/components/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Clock, ChefHat, Truck, AlertCircle, CheckCircle2, Package, Timer, Flame, UtensilsCrossed, MapPin, Phone, ArrowRight, Navigation } from "lucide-react"
+import { Clock, ChefHat, Truck, AlertCircle, CheckCircle2, Package, Timer, Flame, UtensilsCrossed, MapPin, Phone, ArrowRight, Navigation, RefreshCw, Wifi, WifiOff, XCircle } from "lucide-react"
 import Link from "next/link"
 
 // Colores basados en la paleta proporcionada:
@@ -19,7 +20,7 @@ import Link from "next/link"
 
 export default function HomePage() {
   const router = useRouter()
-  const { isAuthenticated, isLoading, user } = useAuth()
+  const { isAuthenticated, isLoading, user, token } = useAuth()
   const [orders, setOrders] = useState<any[]>([])
   const [inTransitOrders, setInTransitOrders] = useState<any[]>([])
   const [stats, setStats] = useState({
@@ -29,109 +30,263 @@ export default function HomePage() {
     dispatched: 0,
   })
   const [dataLoading, setDataLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [wsConnected, setWsConnected] = useState(false)
+  
+  // Ref para WebSocket (solo para Chef)
+  const socketRef = useRef<WebSocket | null>(null)
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
+    console.log("🏠 Page check - isLoading:", isLoading, "isAuthenticated:", isAuthenticated)
     if (!isLoading && !isAuthenticated) {
+      console.log("🚪 Redirecting to login...")
       router.push("/login")
     }
   }, [isAuthenticated, isLoading, router])
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      loadMockData()
-    }
-  }, [isAuthenticated])
+  // Agregamos (user as any) para que TypeScript deje de quejarse
+  const userRole = user?.role?.toLowerCase() || (user as any)?.user_type?.toLowerCase() || ""
+  const isChef = userRole === "cook" || userRole === "chef" || userRole.includes("chef") || userRole.includes("cocina")
+  const isDelivery = userRole === "driver" || userRole.includes("repartidor") || userRole.includes("delivery")
 
-  const loadMockData = () => {
-    setDataLoading(true)
-    setTimeout(() => {
-      const userRole = user?.role?.toLowerCase() || ""
-      const isChef = userRole === "cook" || userRole.includes("chef") || userRole.includes("cocina")
-      const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery") || userRole === "driver"
+  // --- WEBSOCKET PARA CHEF CON MANEJO ROBUSTO DE ERRORES ---
+  useEffect(() => {
+    if (!isAuthenticated || !isChef || !token) return
+
+    // Cargar datos iniciales
+    loadOrdersData()
+
+    // Función para conectar WebSocket
+    const connectWebSocket = () => {
+      const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL
+      
+      // Si no hay URL de WebSocket configurada, solo usar polling
+      if (!wsUrl) {
+        console.log("⚠️ WebSocket URL no configurada, usando solo polling")
+        return
+      }
+
+      // Si ya hay una conexión activa, no crear otra
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        return
+      }
+
+      try {
+        const userId = (user as any)?.user_id || (user as any)?.email?.split('@')[0] || 'chef'
+        const ws = new WebSocket(`${wsUrl}?token=${token}&user_id=${userId}&user_type=chef`)
+        socketRef.current = ws
+
+        // Timeout para detectar si la conexión falla rápidamente
+        const connectionTimeout = setTimeout(() => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            console.log("⏱️ Timeout de conexión WebSocket - usando polling")
+            ws.close()
+          }
+        }, 5000)
+
+        ws.onopen = () => {
+          clearTimeout(connectionTimeout)
+          setWsConnected(true)
+          console.log("🟢 Chef: Conectado a WebSocket en tiempo real")
+        }
+
+        ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data)
+            console.log("📩 Notificación recibida:", message)
+            
+            // Recargar pedidos cuando hay cambios
+            if (message.type === 'order_update' || message.action === 'new_order') {
+              console.log("🔄 Actualizando pedidos...")
+              loadOrdersData(true) // Recarga silenciosa
+            }
+          } catch (err) {
+            console.error("Error procesando mensaje WS:", err)
+          }
+        }
+
+        ws.onerror = (error) => {
+          clearTimeout(connectionTimeout)
+          // No mostrar error si simplemente no está disponible
+          console.log("⚠️ WebSocket no disponible - usando polling como respaldo")
+        }
+
+        ws.onclose = () => {
+          clearTimeout(connectionTimeout)
+          setWsConnected(false)
+          socketRef.current = null
+          
+          // No intentar reconectar automáticamente si el servidor no existe
+          // El polling se encargará de mantener los datos actualizados
+          console.log("🔵 WebSocket cerrado - continuando con polling")
+        }
+      } catch (error) {
+        console.log("⚠️ No se pudo conectar a WebSocket - usando polling")
+      }
+    }
+
+    // Intentar conectar WebSocket (fallará silenciosamente si no está disponible)
+    connectWebSocket()
+
+    // Polling de respaldo cada 15 segundos (más frecuente si no hay WS)
+    const pollingInterval = setInterval(() => {
+      if (isChef) {
+        loadOrdersData(true) // Recarga silenciosa
+      }
+    }, 15000)
+
+    // Cleanup
+    return () => {
+      clearInterval(pollingInterval)
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+      }
+      if (socketRef.current) {
+        socketRef.current.close()
+        socketRef.current = null
+      }
+    }
+  }, [isAuthenticated, isChef, token])
+
+  // Cargar datos cuando es repartidor
+  useEffect(() => {
+    if (isAuthenticated && isDelivery) {
+      loadOrdersData()
+      
+      // Polling cada 15 segundos para repartidor
+      const pollingInterval = setInterval(() => {
+        loadOrdersData(true)
+      }, 15000)
+      
+      return () => clearInterval(pollingInterval)
+    }
+  }, [isAuthenticated, isDelivery])
+
+  const loadOrdersData = async (silent = false) => {
+    if (!silent) setDataLoading(true)
+    setError(null)
+    
+    try {
+      console.log("📡 Cargando pedidos desde API...")
       
       if (isChef) {
-        // Datos mock Chef (Pedidos activos)
-        setOrders([
-          {
-            id: "ORD001", customer: "Juan Pérez", phone: "+51 999 888 777", status: "pending", createdAt: new Date().toISOString(),
-            items: [{ qty: 2, name: "Ceviche Clásico" }, { qty: 1, name: "Arroz con Mariscos" }], total: 45.50, estimatedTime: 15, priority: "high"
-          },
-          {
-            id: "ORD002", customer: "María García", phone: "+51 999 777 666", status: "cooking", createdAt: new Date(Date.now() - 300000).toISOString(),
-            items: [{ qty: 1, name: "Lomo Saltado" }, { qty: 2, name: "Causa Limeña" }], total: 38.00, estimatedTime: 12, timeElapsed: 5, priority: "medium"
-          }
-        ])
-        setStats({ pending: 1, cooking: 1, ready: 0, dispatched: 0 })
+        // Chef: usar endpoint normal
+        const data = await apiClient.orders.getAll()
+        const ordersArray = Array.isArray(data) ? data : (data.items || data.orders || data.data || [])
+        
+        console.log("📦 Pedidos recibidos:", ordersArray.length)
+        
+        // Filtrar solo pedidos relevantes para el chef (pending, cooking)
+        const chefOrders = ordersArray.filter((o: any) => 
+          ['pending', 'cooking', 'in_progress'].includes(o.status)
+        )
+        setOrders(chefOrders)
+        
+        // Calcular stats
+        setStats({
+          pending: chefOrders.filter((o: any) => o.status === 'pending').length,
+          cooking: chefOrders.filter((o: any) => ['cooking', 'in_progress'].includes(o.status)).length,
+          ready: ordersArray.filter((o: any) => o.status === 'ready').length,
+          dispatched: 0,
+        })
+        
+        console.log("👨‍🍳 Chef - Pedidos activos:", chefOrders.length)
+        
       } else if (isDelivery) {
-        // DATOS MOCK REPARTIDOR:
-        // Pedidos listos para recoger (status: ready)
-        setOrders([
-          {
-            id: "ORD004", customer: "Ana Martínez", phone: "+51 999 555 444", status: "ready", createdAt: new Date(Date.now() - 1800000).toISOString(),
-            items: [{ qty: 1, name: "Ceviche Mixto" }, { qty: 2, name: "Chicha Morada" }], total: 35.00,
-            deliveryAddress: "Av. Principal 123, San Isidro", deliveryTime: 15, distance: "2.5 km", paymentMethod: "Efectivo"
-          },
-          {
-            id: "ORD006", customer: "Laura Fernández", phone: "+51 999 333 222", status: "ready", createdAt: new Date(Date.now() - 600000).toISOString(),
-            items: [{ qty: 1, name: "Arroz con Mariscos" }], total: 42.50,
-            deliveryAddress: "Av. Larco 789, San Borja", deliveryTime: 18, distance: "3.8 km", paymentMethod: "Efectivo"
-          }
+        // Driver: usar endpoints específicos de driver
+        const [availableData, assignedData] = await Promise.all([
+          apiClient.driver.getAvailable(),
+          apiClient.driver.getAssigned(),
         ])
-        // Pedidos que ya tomó (status: dispatched) - simulación inicial
-        setInTransitOrders([
-           {
-            id: "ORD005", customer: "Roberto Silva", phone: "+51 999 444 333", status: "dispatched", createdAt: new Date(Date.now() - 900000).toISOString(),
-            items: [{ qty: 2, name: "Lomo Saltado" }], total: 48.00,
-            deliveryAddress: "Jr. Los Olivos 456, Miraflores", deliveryTime: 20, distance: "4.2 km", paymentMethod: "Tarjeta", timeElapsed: 8
-          }
-        ])
-        setStats({ pending: 0, cooking: 0, ready: 2, dispatched: 1 })
+        
+        const availableOrders = Array.isArray(availableData) ? availableData : (availableData.items || availableData.orders || [])
+        const assignedOrders = Array.isArray(assignedData) ? assignedData : (assignedData.items || assignedData.orders || [])
+        
+        setOrders(availableOrders)
+        setInTransitOrders(assignedOrders)
+        setStats({
+          pending: 0,
+          cooking: 0,
+          ready: availableOrders.length,
+          dispatched: assignedOrders.length,
+        })
+        
+        console.log("🚚 Delivery - Disponibles:", availableOrders.length, "Asignados:", assignedOrders.length)
       }
-      setDataLoading(false)
-    }, 500)
+      
+    } catch (err: any) {
+      console.error("❌ Error cargando pedidos:", err)
+      setError(err.message || "Error al cargar los pedidos")
+    } finally {
+      if (!silent) setDataLoading(false)
+    }
   }
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    const userRole = user?.role?.toLowerCase() || ""
-    const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery") || userRole === "driver"
-    const isChef = userRole === "cook" || userRole.includes("chef") || userRole.includes("cocina")
-    
-    // Lógica para cocinero: marcar como listo
-    if (isChef && newStatus === "ready") {
-      const selectedOrder = orders.find((order: any) => order.id === orderId)
-      if (selectedOrder) {
-        setOrders(orders.filter((order: any) => order.id !== orderId))
-        setStats({ ...stats, pending: stats.pending - (selectedOrder.status === "pending" ? 1 : 0), cooking: stats.cooking - (selectedOrder.status === "cooking" ? 1 : 0), ready: stats.ready + 1 })
+    try {
+      console.log(`🔄 Actualizando pedido ${orderId} a estado: ${newStatus}`)
+      
+      // Chef: usar endpoint normal
+      if (isChef) {
+        await apiClient.orders.updateStatus(orderId, newStatus)
       }
+      
+      console.log("✅ Estado actualizado exitosamente")
+      
+      // Recargar datos para reflejar cambios
+      loadOrdersData(true)
+      
+    } catch (error: any) {
+      console.error("❌ Error actualizando estado del pedido:", error)
+      setError("Error al actualizar el pedido")
+      
+      // Volver a cargar para asegurar consistencia
+      setTimeout(() => loadOrdersData(true), 1000)
     }
-    
-    // Lógica para cocinero: cambiar de pending a cooking
-    if (isChef && newStatus === "cooking") {
-      setOrders(orders.map((order: any) => 
-        order.id === orderId 
-          ? { ...order, status: "cooking", timeElapsed: 0 }
-          : order
-      ))
-      const order = orders.find((o: any) => o.id === orderId)
-      if (order && order.status === "pending") {
-        setStats({ ...stats, pending: stats.pending - 1, cooking: stats.cooking + 1 })
-      }
+  }
+
+  // Función para que el driver recoja un pedido
+  const handlePickupOrder = async (orderId: string) => {
+    try {
+      console.log(`📦 Driver recogiendo pedido: ${orderId}`)
+      await apiClient.driver.pickup(orderId)
+      console.log("✅ Pedido recogido exitosamente")
+      loadOrdersData(true)
+    } catch (error: any) {
+      console.error("❌ Error al recoger pedido:", error)
+      setError("Error al recoger el pedido")
+      setTimeout(() => loadOrdersData(true), 1000)
     }
-    
-    // Lógica para mover de "Listos" a "En Tránsito"
-    if (isDelivery && newStatus === "dispatched") {
-      const selectedOrder = orders.find((order: any) => order.id === orderId)
-      if (selectedOrder) {
-        setInTransitOrders([...inTransitOrders, { ...selectedOrder, status: "dispatched", timeElapsed: 0 }])
-        setOrders(orders.filter((order: any) => order.id !== orderId))
-        setStats({ ...stats, ready: stats.ready - 1, dispatched: stats.dispatched + 1 })
-      }
+  }
+
+  // Función para completar entrega
+  const handleCompleteDelivery = async (orderId: string) => {
+    try {
+      console.log(`✅ Driver completando entrega: ${orderId}`)
+      await apiClient.driver.complete(orderId)
+      console.log("✅ Entrega completada exitosamente")
+      loadOrdersData(true)
+    } catch (error: any) {
+      console.error("❌ Error al completar entrega:", error)
+      setError("Error al completar la entrega")
+      setTimeout(() => loadOrdersData(true), 1000)
     }
+  }
+
+  // Función para cancelar entrega
+  const handleCancelDelivery = async (orderId: string) => {
+    if (!confirm("¿Estás seguro de cancelar esta entrega?")) return
     
-    // Lógica para finalizar entrega
-    if (isDelivery && newStatus === "delivered") {
-      setInTransitOrders(inTransitOrders.filter((order: any) => order.id !== orderId))
-      setStats({ ...stats, dispatched: stats.dispatched - 1 })
+    try {
+      console.log(`❌ Driver cancelando entrega: ${orderId}`)
+      await apiClient.driver.cancel(orderId)
+      console.log("✅ Entrega cancelada exitosamente")
+      loadOrdersData(true)
+    } catch (error: any) {
+      console.error("❌ Error al cancelar entrega:", error)
+      setError("Error al cancelar la entrega")
+      setTimeout(() => loadOrdersData(true), 1000)
     }
   }
 
@@ -161,10 +316,6 @@ export default function HomePage() {
 
   if (!isAuthenticated) return null
 
-  const userRole = user?.role?.toLowerCase() || ""
-  const isChef = userRole === "cook" || userRole.includes("chef") || userRole.includes("cocina")
-  const isDelivery = userRole.includes("repartidor") || userRole.includes("delivery") || userRole === "driver"
-
   return (
     <div className="min-h-screen bg-[#F2EEE9] text-[#00408C]">
       <Header />
@@ -177,8 +328,23 @@ export default function HomePage() {
                 {isChef ? "Panel de Cocina" : isDelivery ? "Panel de Reparto" : "Dashboard"}
              </h1>
              <p className="text-[#00408C]/70">
-                {isDelivery ? "Gestiona tus entregas y rutas" : "Bienvenido al sistema 200 Millas"}
+                {isDelivery ? "Gestiona tus entregas y rutas" : isChef ? "Pedidos actualizados automáticamente" : "Bienvenido al sistema 200 Millas"}
              </p>
+             {isChef && (
+               <div className="flex items-center gap-2 mt-1">
+                 {wsConnected ? (
+                   <p className="text-xs text-green-600 flex items-center gap-1">
+                     <Wifi className="w-3 h-3" />
+                     Tiempo real activo
+                   </p>
+                 ) : (
+                   <p className="text-xs text-[#00408C]/60 flex items-center gap-1">
+                     <RefreshCw className="w-3 h-3" />
+                     Auto-actualización cada 15s
+                   </p>
+                 )}
+               </div>
+             )}
           </div>
           
           <div className="flex gap-3">
@@ -186,27 +352,55 @@ export default function HomePage() {
              <div className="bg-white rounded-full px-4 py-2 flex items-center gap-2 shadow-sm">
                 <div className="w-2 h-2 rounded-full bg-[#E85234]"></div>
                 <span className="font-bold">{isDelivery ? stats.ready : stats.pending}</span>
-                <span className="text-xs opacity-70 uppercase">{isDelivery ? "Listos" : "Pendientes"}</span>
+                <span className="text-xs opacity-70 uppercase">{isDelivery ? "Disponibles" : "Pendientes"}</span>
              </div>
              {isDelivery && (
                 <div className="bg-[#00408C] text-white rounded-full px-4 py-2 flex items-center gap-2 shadow-sm">
                     <Truck className="w-3 h-3" />
                     <span className="font-bold">{stats.dispatched}</span>
-                    <span className="text-xs opacity-90 uppercase">En Ruta</span>
+                    <span className="text-xs opacity-90 uppercase">Mis Entregas</span>
                 </div>
              )}
+             <Button
+               onClick={() => loadOrdersData()}
+               variant="outline"
+               size="sm"
+               className="rounded-full border-[#00408C]/20 hover:bg-[#00408C]/5"
+               title="Actualizar pedidos"
+             >
+               <RefreshCw className="w-4 h-4" />
+             </Button>
           </div>
         </div>
+
+        {/* Error Banner */}
+        {error && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-2xl p-4 flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+            <p className="text-red-800 flex-1">{error}</p>
+            <Button
+              onClick={() => {
+                setError(null)
+                loadOrdersData()
+              }}
+              variant="ghost"
+              size="sm"
+              className="text-red-600 hover:text-red-700 hover:bg-red-100"
+            >
+              Reintentar
+            </Button>
+          </div>
+        )}
 
         {/* --- VISTA REPARTIDOR --- */}
         {isDelivery && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             
-            {/* Columna Izquierda: Pedidos En Tránsito (Prioridad Alta) */}
+            {/* Columna Izquierda: Pedidos En Tránsito (Mis Entregas) */}
             <div className="lg:col-span-7 space-y-6">
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-bold flex items-center gap-2">
-                        <Truck className="w-5 h-5" /> En Tránsito
+                        <Truck className="w-5 h-5" /> Mis Entregas
                     </h2>
                     <Link href="/dashboard">
                         <Button variant="link" className="text-[#E85234] p-0 h-auto font-semibold">
@@ -219,12 +413,13 @@ export default function HomePage() {
                     <Card className="border-none shadow-none bg-[#96ADD6]/20 rounded-3xl h-48 flex items-center justify-center border-2 border-dashed border-[#96ADD6]">
                         <div className="text-center opacity-60">
                             <Navigation className="w-10 h-10 mx-auto mb-2 text-[#00408C]" />
-                            <p>No tienes pedidos en ruta</p>
+                            <p className="font-medium">No tienes entregas activas</p>
+                            <p className="text-sm mt-1">Recoge un pedido para comenzar</p>
                         </div>
                     </Card>
                 ) : (
                     inTransitOrders.map(order => (
-                        <Card key={order.id} className="border-none shadow-md rounded-[2rem] bg-white overflow-hidden relative group">
+                        <Card key={order.id || order.order_id} className="border-none shadow-md rounded-[2rem] bg-white overflow-hidden relative group">
                             {/* Accent Bar */}
                             <div className="absolute top-0 left-0 w-full h-1 bg-[#00408C]"></div>
                             
@@ -233,78 +428,87 @@ export default function HomePage() {
                                     <div>
                                         <div className="flex items-center gap-2 mb-1">
                                             <Badge className="bg-[#00408C] hover:bg-[#00408C]/90 text-white border-none px-3 py-1">En Ruta</Badge>
-                                            <span className="text-sm font-bold text-[#00408C]">{order.id}</span>
+                                            <span className="text-sm font-bold text-[#00408C]">{order.id || order.order_id}</span>
                                         </div>
-                                        <h3 className="text-xl font-bold text-[#E85234]">{order.customer}</h3>
+                                        <h3 className="text-xl font-bold text-[#E85234]">{order.customer || order.customer_name}</h3>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-2xl font-bold text-[#00408C]">{order.deliveryTime} min</p>
+                                        <p className="text-2xl font-bold text-[#00408C]">{order.deliveryTime || order.estimated_time || '20'} min</p>
                                         <p className="text-xs text-[#00408C]/60">Estimado</p>
                                     </div>
                                 </div>
 
                                 <div className="bg-[#F2EEE9] rounded-2xl p-4 mb-4 flex items-start gap-3">
                                     <MapPin className="w-5 h-5 text-[#E85234] mt-1 shrink-0" />
-                                    <div>
-                                        <p className="font-semibold text-[#00408C] leading-tight">{order.deliveryAddress}</p>
-                                        <p className="text-sm text-[#00408C]/60 mt-1">Distancia: {order.distance}</p>
+                                    <div className="flex-1">
+                                        <p className="font-semibold text-[#00408C] leading-tight">{order.deliveryAddress || order.delivery_address || 'Dirección no disponible'}</p>
+                                        <p className="text-sm text-[#00408C]/60 mt-1">Distancia: {order.distance || 'N/A'}</p>
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-3 gap-2">
                                     <Button 
-                                        className="w-full bg-[#E85234] hover:bg-[#E85234]/90 text-white rounded-xl h-12 font-semibold shadow-md shadow-red-200"
-                                        onClick={() => updateOrderStatus(order.id, "delivered")}
+                                        className="col-span-2 bg-[#E85234] hover:bg-[#E85234]/90 text-white rounded-xl h-12 font-semibold shadow-md shadow-red-200"
+                                        onClick={() => handleCompleteDelivery(order.id || order.order_id)}
                                     >
-                                        <CheckCircle2 className="w-5 h-5 mr-2" /> Entregar
+                                        <CheckCircle2 className="w-5 h-5 mr-2" /> Completar
                                     </Button>
-                                    <a href={`tel:${order.phone}`} className="w-full">
-                                        <Button variant="outline" className="w-full border-2 border-[#96ADD6] text-[#00408C] hover:bg-[#96ADD6]/10 rounded-xl h-12 font-semibold">
-                                            <Phone className="w-4 h-4 mr-2" /> Llamar
-                                        </Button>
-                                    </a>
+                                    <Button 
+                                        variant="outline"
+                                        className="border-2 border-red-300 text-red-600 hover:bg-red-50 rounded-xl h-12"
+                                        onClick={() => handleCancelDelivery(order.id || order.order_id)}
+                                    >
+                                        <XCircle className="w-5 h-5" />
+                                    </Button>
                                 </div>
+
+                                <a href={`tel:${order.phone || order.customer_phone}`} className="mt-2 block">
+                                    <Button variant="ghost" className="w-full text-[#00408C] hover:bg-[#96ADD6]/10 rounded-xl h-10">
+                                        <Phone className="w-4 h-4 mr-2" /> Llamar Cliente
+                                    </Button>
+                                </a>
                             </CardContent>
                         </Card>
                     ))
                 )}
             </div>
 
-            {/* Columna Derecha: Pedidos Listos (Para recoger) */}
+            {/* Columna Derecha: Pedidos Disponibles para Recoger */}
             <div className="lg:col-span-5 space-y-6">
                 <h2 className="text-xl font-bold flex items-center gap-2 pl-2">
-                    <Package className="w-5 h-5" /> Listos para Recoger
+                    <Package className="w-5 h-5" /> Disponibles para Recoger
                 </h2>
 
                 <div className="space-y-4">
-                    {orders.filter(o => o.status === "ready").map(order => (
-                        <Card key={order.id} className="border-none shadow-sm hover:shadow-md transition-shadow rounded-[1.5rem] bg-white/60 backdrop-blur-sm">
-                            <CardContent className="p-5">
-                                <div className="flex justify-between items-center mb-3">
-                                    <Badge className="bg-[#96ADD6] text-[#00408C] hover:bg-[#96ADD6] border-none">Listo</Badge>
-                                    <span className="font-bold text-[#00408C]">{order.id}</span>
-                                </div>
-                                
-                                <div className="mb-3">
-                                    <p className="font-bold text-lg text-[#00408C]">{order.deliveryAddress}</p>
-                                    <p className="text-sm text-[#00408C]/60">{order.items.length} items • {order.paymentMethod}</p>
-                                </div>
-
-                                <Button 
-                                    className="w-full bg-[#00408C] hover:bg-[#00408C]/90 text-white rounded-xl h-10 font-medium"
-                                    onClick={() => updateOrderStatus(order.id, "dispatched")}
-                                >
-                                    Iniciar Ruta <ArrowRight className="w-4 h-4 ml-2" />
-                                </Button>
-                            </CardContent>
-                        </Card>
-                    ))}
-                    
-                    {orders.filter(o => o.status === "ready").length === 0 && (
-                         <div className="text-center py-8 opacity-50">
-                            <CheckCircle2 className="w-8 h-8 mx-auto mb-2" />
-                            <p>No hay pedidos pendientes</p>
+                    {orders.length === 0 ? (
+                         <div className="text-center py-12 opacity-50">
+                            <Package className="w-12 h-12 mx-auto mb-3 text-[#00408C]" />
+                            <p className="font-medium">No hay pedidos disponibles</p>
+                            <p className="text-sm mt-1">Espera a que cocina termine los pedidos</p>
                          </div>
+                    ) : (
+                        orders.map(order => (
+                            <Card key={order.id || order.order_id} className="border-none shadow-sm hover:shadow-md transition-shadow rounded-[1.5rem] bg-white/60 backdrop-blur-sm">
+                                <CardContent className="p-5">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <Badge className="bg-[#96ADD6] text-[#00408C] hover:bg-[#96ADD6] border-none">Listo</Badge>
+                                        <span className="font-bold text-[#00408C]">{order.id || order.order_id}</span>
+                                    </div>
+                                    
+                                    <div className="mb-3">
+                                        <p className="font-bold text-lg text-[#00408C]">{order.deliveryAddress || order.delivery_address || 'Dirección no disponible'}</p>
+                                        <p className="text-sm text-[#00408C]/60">{(order.items || []).length} items • {order.paymentMethod || order.payment_method || 'Efectivo'}</p>
+                                    </div>
+
+                                    <Button 
+                                        className="w-full bg-[#00408C] hover:bg-[#00408C]/90 text-white rounded-xl h-10 font-medium"
+                                        onClick={() => handlePickupOrder(order.id || order.order_id)}
+                                    >
+                                        Recoger Pedido <ArrowRight className="w-4 h-4 ml-2" />
+                                    </Button>
+                                </CardContent>
+                            </Card>
+                        ))
                     )}
                 </div>
             </div>
@@ -322,26 +526,27 @@ export default function HomePage() {
             {orders.length === 0 ? (
               <Card className="border-none shadow-none bg-[#96ADD6]/20 rounded-3xl h-48 flex items-center justify-center border-2 border-dashed border-[#96ADD6]">
                 <div className="text-center opacity-60">
-                  <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-[#00408C]" />
-                  <p>No hay pedidos activos</p>
+                  <UtensilsCrossed className="w-12 h-12 mx-auto mb-3 text-[#00408C]" />
+                  <p className="font-medium">No hay pedidos activos</p>
+                  <p className="text-sm mt-1">Los nuevos pedidos aparecerán aquí automáticamente</p>
                 </div>
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {orders.map(order => (
-                  <Card key={order.id} className="border-none shadow-md rounded-[2rem] bg-white relative overflow-hidden">
-                    <div className={`absolute left-0 top-0 w-2 h-full ${order.status === 'cooking' ? 'bg-[#E85234]' : 'bg-[#96ADD6]'}`}></div>
+                  <Card key={order.id} className="border-none shadow-md rounded-[2rem] bg-white relative overflow-hidden hover:shadow-lg transition-shadow">
+                    <div className={`absolute left-0 top-0 w-2 h-full ${(order.status === 'cooking' || order.status === 'in_progress') ? 'bg-[#E85234]' : 'bg-[#96ADD6]'}`}></div>
                     <CardContent className="p-6 pl-8">
                       <div className="flex justify-between mb-2">
                         <span className="text-sm font-bold text-[#00408C]/50">MESA / CLIENTE</span>
-                        <span className="font-mono text-[#E85234] font-bold">{order.estimatedTime}m</span>
+                        <span className="font-mono text-[#E85234] font-bold">{order.estimatedTime || order.estimated_time || '15'}m</span>
                       </div>
-                      <h3 className="text-xl font-bold text-[#00408C] mb-4">{order.customer}</h3>
+                      <h3 className="text-xl font-bold text-[#00408C] mb-4">{order.customer || order.customer_name || 'Cliente'}</h3>
                       <div className="space-y-2 mb-6">
-                        {order.items.map((item: any, idx: number) => (
+                        {(order.items || []).map((item: any, idx: number) => (
                           <div key={idx} className="flex justify-between items-center border-b border-[#F2EEE9] pb-1">
-                            <span className="font-medium text-[#00408C]">{item.name}</span>
-                            <Badge variant="outline" className="border-[#00408C]/20 text-[#00408C]">x{item.qty}</Badge>
+                            <span className="font-medium text-[#00408C]">{item.name || item.product_name}</span>
+                            <Badge variant="outline" className="border-[#00408C]/20 text-[#00408C]">x{item.qty || item.quantity || 1}</Badge>
                           </div>
                         ))}
                       </div>
@@ -352,10 +557,10 @@ export default function HomePage() {
                           </Button>
                         </Link>
                         <Button 
-                          className={`flex-1 rounded-xl font-bold border-none text-white ${order.status === 'cooking' ? 'bg-[#E85234] hover:bg-[#E85234]/90' : 'bg-[#00408C] hover:bg-[#00408C]/90'}`}
-                          onClick={() => updateOrderStatus(order.id, order.status === 'cooking' ? 'ready' : 'cooking')}
+                          className={`flex-1 rounded-xl font-bold border-none text-white ${(order.status === 'cooking' || order.status === 'in_progress') ? 'bg-[#E85234] hover:bg-[#E85234]/90' : 'bg-[#00408C] hover:bg-[#00408C]/90'}`}
+                          onClick={() => updateOrderStatus(order.id, (order.status === 'cooking' || order.status === 'in_progress') ? 'ready' : 'cooking')}
                         >
-                          {order.status === 'cooking' ? 'Terminar' : 'Cocinar'}
+                          {(order.status === 'cooking' || order.status === 'in_progress') ? 'Terminar' : 'Cocinar'}
                         </Button>
                       </div>
                     </CardContent>
