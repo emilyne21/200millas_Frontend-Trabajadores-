@@ -55,39 +55,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       console.log("🔐 Login attempt for:", email)
       setIsLoading(true)
+      
       const response = await apiClient.auth.login(email, password)
       
       console.log("📥 Login response:", response)
       
-      if (response.user && response.token) {
-        // Usar 'as any' para evitar errores de TypeScript con propiedades dinámicas
-        const backendUser = response.user as any
-        
-        const normalizedUser = {
-          ...backendUser,
-          role: backendUser.role || backendUser.user_type || "chef",
-          user_type: backendUser.user_type || backendUser.role || "chef"
-        }
-        
-        console.log("💾 Saving to localStorage:", normalizedUser)
-        
-        // 🔥 GUARDAR EN LOCALSTORAGE
-        localStorage.setItem("auth_token", response.token)
-        localStorage.setItem("auth_user", JSON.stringify(normalizedUser))
-        
-        setUser(normalizedUser)
-        setToken(response.token)
-        setAuthToken(response.token)
-        
-        // Manejar tenantId opcional
-        const userTenantId = backendUser.tenantId || backendUser.tenant_id || "200millas"
-        setTenantId(userTenantId)
-        
-        console.log("✅ Login successful, state updated")
+      // ✅ VALIDACIÓN CRÍTICA: Verificar que realmente tenemos datos válidos
+      if (!response || !response.token || !response.user) {
+        console.error("❌ Invalid login response:", response)
+        throw new Error("Credenciales incorrectas o usuario no encontrado")
       }
-    } catch (error) {
-      console.error("❌ Login error:", error)
-      throw error
+      
+      // Verificar que el token no esté vacío
+      if (!response.token.trim()) {
+        console.error("❌ Empty token received")
+        throw new Error("Error de autenticación")
+      }
+      
+      // Usar 'as any' para evitar errores de TypeScript con propiedades dinámicas
+      const backendUser = response.user as any
+      
+      const normalizedUser = {
+        ...backendUser,
+        role: backendUser.role || backendUser.user_type || "chef",
+        user_type: backendUser.user_type || backendUser.role || "chef"
+      }
+      
+      console.log("💾 Saving to localStorage:", normalizedUser)
+      
+      // 🔥 GUARDAR EN LOCALSTORAGE
+      localStorage.setItem("auth_token", response.token)
+      localStorage.setItem("auth_user", JSON.stringify(normalizedUser))
+      
+      setUser(normalizedUser)
+      setToken(response.token)
+      setAuthToken(response.token)
+      
+      // Manejar tenantId opcional
+      const userTenantId = backendUser.tenantId || backendUser.tenant_id || "200millas"
+      setTenantId(userTenantId)
+      
+      console.log("✅ Login successful, state updated")
+      
+    } catch (error: any) {
+      console.error("❌ Login error in auth context:", error)
+      
+      // Limpiar cualquier dato parcial
+      localStorage.removeItem("auth_token")
+      localStorage.removeItem("auth_user")
+      setUser(null)
+      setToken(null)
+      setAuthToken(null)
+      
+      // Re-lanzar el error para que el componente de login lo capture
+      throw new Error(error.message || "Credenciales incorrectas o usuario no encontrado")
+      
     } finally {
       setIsLoading(false)
     }
