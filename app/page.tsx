@@ -8,8 +8,9 @@ import Header from "@/components/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Clock, ChefHat, Truck, AlertCircle, CheckCircle2, Package, Timer, Flame, UtensilsCrossed, MapPin, Phone, ArrowRight, Navigation, RefreshCw, Wifi, WifiOff, XCircle } from "lucide-react"
+import { Clock, ChefHat, Truck, AlertCircle, CheckCircle2, Package, Timer, Flame, UtensilsCrossed, MapPin, Phone, ArrowRight, Navigation, RefreshCw, Wifi, WifiOff, XCircle, Users, BarChart3, TrendingUp, Activity, Eye } from "lucide-react"
 import Link from "next/link"
+import AdminDashboard from "@/components/admin-dashboard"
 
 // Colores basados en la paleta proporcionada:
 // Fondo: #F2EEE9 (Cream)
@@ -32,6 +33,8 @@ export default function HomePage() {
   const [dataLoading, setDataLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [wsConnected, setWsConnected] = useState(false)
+  const [chefAvailability, setChefAvailability] = useState<"available" | "busy" | "offline" | null>(null)
+  const [updatingAvailability, setUpdatingAvailability] = useState(false)
   
   // Ref para WebSocket (solo para Chef)
   const socketRef = useRef<WebSocket | null>(null)
@@ -49,6 +52,7 @@ export default function HomePage() {
   const userRole = user?.role?.toLowerCase() || (user as any)?.user_type?.toLowerCase() || ""
   const isChef = userRole === "cook" || userRole === "chef" || userRole.includes("chef") || userRole.includes("cocina")
   const isDelivery = userRole === "driver" || userRole.includes("repartidor") || userRole.includes("delivery")
+  const isAdmin = userRole === "admin" || userRole.includes("admin")
 
   // --- WEBSOCKET PARA CHEF CON MANEJO ROBUSTO DE ERRORES ---
   useEffect(() => {
@@ -163,6 +167,82 @@ export default function HomePage() {
     }
   }, [isAuthenticated, isDelivery])
 
+  // Cargar datos cuando es admin
+  useEffect(() => {
+    if (isAuthenticated && isAdmin) {
+      loadOrdersData()
+      
+      // Polling cada 30 segundos para admin (menos frecuente)
+      const pollingInterval = setInterval(() => {
+        loadOrdersData(true)
+      }, 30000)
+      
+      return () => clearInterval(pollingInterval)
+    }
+  }, [isAuthenticated, isAdmin])
+
+  // Cargar disponibilidad del chef al iniciar
+  useEffect(() => {
+    if (isAuthenticated && isChef) {
+      // Inicializar como offline por defecto
+      setChefAvailability("offline")
+      // Opcional: cargar el estado real del backend (pero mostrar offline inicialmente)
+      // loadChefAvailability()
+    }
+  }, [isAuthenticated, isChef])
+
+  const loadChefAvailability = async () => {
+    try {
+      const data = await apiClient.chef.getAvailableChefs()
+      // Buscar el chef actual en la lista
+      const userEmail = (user as any)?.email || user?.email
+      const allChefs = [...(data.available || []), ...(data.busy || []), ...(data.offline || [])]
+      const currentChef = allChefs.find((chef: any) => chef.email === userEmail || chef.staff_id === userEmail)
+      
+      if (currentChef) {
+        // Si el chef ya tiene un estado en el backend, usarlo
+        // Pero si está "available" por defecto del login, lo dejamos como está
+        setChefAvailability(currentChef.status || "offline")
+      } else {
+        // Si no está en la lista, por defecto está offline hasta que active su disponibilidad
+        setChefAvailability("offline")
+      }
+    } catch (err: any) {
+      console.error("Error loading chef availability:", err)
+      // Por defecto, offline hasta que el chef active su disponibilidad
+      setChefAvailability("offline")
+    }
+  }
+
+  const handleToggleAvailability = async () => {
+    if (!isChef || updatingAvailability) return
+    
+    setUpdatingAvailability(true)
+    try {
+      // Si está offline, cambiar a available. Si está available, cambiar a offline
+      const newStatus = chefAvailability === "offline" ? "available" : "offline"
+      
+      await apiClient.chef.reportAvailability(newStatus)
+      setChefAvailability(newStatus)
+      
+      console.log(`✅ Disponibilidad actualizada a: ${newStatus}`)
+      
+      // Mostrar mensaje de confirmación
+      if (newStatus === "available") {
+        console.log("✅ Ahora estás disponible para recibir pedidos")
+        // Recargar pedidos cuando se activa la disponibilidad
+        loadOrdersData(true)
+      } else {
+        console.log("⏸️ Ahora estás offline - no recibirás nuevos pedidos")
+      }
+    } catch (err: any) {
+      console.error("Error updating availability:", err)
+      setError(err.message || "Error al actualizar disponibilidad")
+    } finally {
+      setUpdatingAvailability(false)
+    }
+  }
+
   const loadOrdersData = async (silent = false) => {
     if (!silent) setDataLoading(true)
     setError(null)
@@ -171,27 +251,24 @@ export default function HomePage() {
       console.log("📡 Cargando pedidos desde API...")
       
       if (isChef) {
-        // Chef: usar endpoint normal
-        const data = await apiClient.orders.getAll()
-        const ordersArray = Array.isArray(data) ? data : (data.items || data.orders || data.data || [])
+        // Chef: usar endpoint específico de chef
+        const response = await apiClient.chef.getAssignedOrders()
+        // El backend devuelve { success: true, data: { orders: [...], count: ... } }
+        const ordersArray = Array.isArray(response) ? response : (response.orders || [])
         
         console.log("📦 Pedidos recibidos:", ordersArray.length)
         
-        // Filtrar solo pedidos relevantes para el chef (pending, cooking)
-        const chefOrders = ordersArray.filter((o: any) => 
-          ['pending', 'cooking', 'in_progress'].includes(o.status)
-        )
-        setOrders(chefOrders)
+        setOrders(ordersArray)
         
         // Calcular stats
         setStats({
-          pending: chefOrders.filter((o: any) => o.status === 'pending').length,
-          cooking: chefOrders.filter((o: any) => ['cooking', 'in_progress'].includes(o.status)).length,
-          ready: ordersArray.filter((o: any) => o.status === 'ready').length,
+          pending: ordersArray.filter((o: any) => o.status === 'pending' || o.status === 'confirmed').length,
+          cooking: ordersArray.filter((o: any) => o.status === 'cooking').length,
+          ready: ordersArray.filter((o: any) => o.status === 'ready' || o.status === 'packing').length,
           dispatched: 0,
         })
         
-        console.log("👨‍🍳 Chef - Pedidos activos:", chefOrders.length)
+        console.log("👨‍🍳 Chef - Pedidos activos:", ordersArray.length)
         
       } else if (isDelivery) {
         // Driver: usar endpoints específicos de driver
@@ -200,8 +277,9 @@ export default function HomePage() {
           apiClient.driver.getAssigned(),
         ])
         
-        const availableOrders = Array.isArray(availableData) ? availableData : (availableData.items || availableData.orders || [])
-        const assignedOrders = Array.isArray(assignedData) ? assignedData : (assignedData.items || assignedData.orders || [])
+        // El backend devuelve { success: true, data: { orders: [...], count: ... } }
+        const availableOrders = Array.isArray(availableData) ? availableData : (availableData.orders || availableData.items || [])
+        const assignedOrders = Array.isArray(assignedData) ? assignedData : (assignedData.orders || assignedData.items || [])
         
         setOrders(availableOrders)
         setInTransitOrders(assignedOrders)
@@ -213,6 +291,35 @@ export default function HomePage() {
         })
         
         console.log("🚚 Delivery - Disponibles:", availableOrders.length, "Asignados:", assignedOrders.length)
+      } else if (isAdmin) {
+        // Admin: ver todos los pedidos usando dashboard
+        try {
+          const dashboardSummary = await apiClient.dashboard.getSummary()
+          const allOrders = dashboardSummary.recent_orders || []
+          
+          setOrders(allOrders)
+          setStats({
+            pending: dashboardSummary.pending || 0,
+            cooking: dashboardSummary.cooking || 0,
+            ready: dashboardSummary.ready || 0,
+            dispatched: dashboardSummary.in_delivery || 0,
+          })
+          
+          console.log("👨‍💼 Admin - Total pedidos:", allOrders.length)
+        } catch (err: any) {
+          // Fallback: usar orders.getAll si dashboard falla
+          console.warn("Dashboard failed, using orders.getAll:", err)
+          const allOrders = await apiClient.orders.getAll()
+          const ordersArray = Array.isArray(allOrders) ? allOrders : (allOrders.orders || allOrders.items || [])
+          
+          setOrders(ordersArray)
+          setStats({
+            pending: ordersArray.filter((o: any) => o.status === 'pending' || o.status === 'confirmed').length,
+            cooking: ordersArray.filter((o: any) => o.status === 'cooking').length,
+            ready: ordersArray.filter((o: any) => o.status === 'ready' || o.status === 'packing').length,
+            dispatched: ordersArray.filter((o: any) => o.status === 'in_delivery' || o.status === 'dispatched').length,
+          })
+        }
       }
       
     } catch (err: any) {
@@ -227,9 +334,15 @@ export default function HomePage() {
     try {
       console.log(`🔄 Actualizando pedido ${orderId} a estado: ${newStatus}`)
       
-      // Chef: usar endpoint normal
+      // Chef: usar endpoints específicos de chef
       if (isChef) {
-        await apiClient.orders.updateStatus(orderId, newStatus)
+        if (newStatus === 'packing' || newStatus === 'ready') {
+          // Si el pedido está en cooking, completar cocción
+          await apiClient.chef.completeCooking(orderId)
+        } else if (newStatus === 'ready') {
+          // Si el pedido está en packing, completar empaquetado
+          await apiClient.chef.completePacking(orderId)
+        }
       }
       
       console.log("✅ Estado actualizado exitosamente")
@@ -239,7 +352,7 @@ export default function HomePage() {
       
     } catch (error: any) {
       console.error("❌ Error actualizando estado del pedido:", error)
-      setError("Error al actualizar el pedido")
+      setError(error.message || "Error al actualizar el pedido")
       
       // Volver a cargar para asegurar consistencia
       setTimeout(() => loadOrdersData(true), 1000)
@@ -325,10 +438,10 @@ export default function HomePage() {
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
           <div>
              <h1 className="text-4xl font-bold tracking-tight mb-1">
-                {isChef ? "Panel de Cocina" : isDelivery ? "Panel de Reparto" : "Dashboard"}
+                {isChef ? "Panel de Cocina" : isDelivery ? "Panel de Reparto" : isAdmin ? "Panel de Administración" : "Dashboard"}
              </h1>
              <p className="text-[#00408C]/70">
-                {isDelivery ? "Gestiona tus entregas y rutas" : isChef ? "Pedidos actualizados automáticamente" : "Bienvenido al sistema 200 Millas"}
+                {isDelivery ? "Gestiona tus entregas y rutas" : isChef ? "Pedidos actualizados automáticamente" : isAdmin ? "Supervisión completa del sistema" : "Bienvenido al sistema 200 Millas"}
              </p>
              {isChef && (
                <div className="flex items-center gap-2 mt-1">
@@ -360,6 +473,32 @@ export default function HomePage() {
                     <span className="font-bold">{stats.dispatched}</span>
                     <span className="text-xs opacity-90 uppercase">Mis Entregas</span>
                 </div>
+             )}
+             {isChef && (
+                <Button
+                  onClick={handleToggleAvailability}
+                  disabled={updatingAvailability || chefAvailability === null}
+                  className={`rounded-full px-4 py-2 font-semibold text-sm shadow-sm transition-all ${
+                    chefAvailability === "available"
+                      ? "bg-green-500 hover:bg-green-600 text-white"
+                      : "bg-gray-500 hover:bg-gray-600 text-white"
+                  }`}
+                  title={chefAvailability === "available" ? "Disponible - Click para ir offline" : "Offline - Click para activar disponibilidad"}
+                >
+                  {updatingAvailability ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : chefAvailability === "available" ? (
+                    <>
+                      <div className="w-2 h-2 rounded-full bg-white mr-2 animate-pulse"></div>
+                      Disponible
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-2 h-2 rounded-full bg-white mr-2"></div>
+                      Offline
+                    </>
+                  )}
+                </Button>
              )}
              <Button
                onClick={() => loadOrdersData()}
@@ -418,8 +557,13 @@ export default function HomePage() {
                         </div>
                     </Card>
                 ) : (
-                    inTransitOrders.map(order => (
-                        <Card key={order.id || order.order_id} className="border-none shadow-md rounded-[2rem] bg-white overflow-hidden relative group">
+                    inTransitOrders.map((order: any) => {
+                      const orderId = order.order_id || order.id
+                      const customerName = order.customer_name || order.customer_id || order.customer
+                      const deliveryAddress = order.delivery_address || order.deliveryAddress
+                      
+                      return (
+                        <Card key={orderId} className="border-none shadow-md rounded-[2rem] bg-white overflow-hidden relative group">
                             {/* Accent Bar */}
                             <div className="absolute top-0 left-0 w-full h-1 bg-[#00408C]"></div>
                             
@@ -428,9 +572,9 @@ export default function HomePage() {
                                     <div>
                                         <div className="flex items-center gap-2 mb-1">
                                             <Badge className="bg-[#00408C] hover:bg-[#00408C]/90 text-white border-none px-3 py-1">En Ruta</Badge>
-                                            <span className="text-sm font-bold text-[#00408C]">{order.id || order.order_id}</span>
+                                            <span className="text-sm font-bold text-[#00408C]">{orderId?.slice(-8) || orderId}</span>
                                         </div>
-                                        <h3 className="text-xl font-bold text-[#E85234]">{order.customer || order.customer_name}</h3>
+                                        <h3 className="text-xl font-bold text-[#E85234]">{customerName || 'Cliente'}</h3>
                                     </div>
                                     <div className="text-right">
                                         <p className="text-2xl font-bold text-[#00408C]">{order.deliveryTime || order.estimated_time || '20'} min</p>
@@ -441,7 +585,7 @@ export default function HomePage() {
                                 <div className="bg-[#F2EEE9] rounded-2xl p-4 mb-4 flex items-start gap-3">
                                     <MapPin className="w-5 h-5 text-[#E85234] mt-1 shrink-0" />
                                     <div className="flex-1">
-                                        <p className="font-semibold text-[#00408C] leading-tight">{order.deliveryAddress || order.delivery_address || 'Dirección no disponible'}</p>
+                                        <p className="font-semibold text-[#00408C] leading-tight">{deliveryAddress || 'Dirección no disponible'}</p>
                                         <p className="text-sm text-[#00408C]/60 mt-1">Distancia: {order.distance || 'N/A'}</p>
                                     </div>
                                 </div>
@@ -449,27 +593,30 @@ export default function HomePage() {
                                 <div className="grid grid-cols-3 gap-2">
                                     <Button 
                                         className="col-span-2 bg-[#E85234] hover:bg-[#E85234]/90 text-white rounded-xl h-12 font-semibold shadow-md shadow-red-200"
-                                        onClick={() => handleCompleteDelivery(order.id || order.order_id)}
+                                        onClick={() => handleCompleteDelivery(orderId)}
                                     >
                                         <CheckCircle2 className="w-5 h-5 mr-2" /> Completar
                                     </Button>
                                     <Button 
                                         variant="outline"
                                         className="border-2 border-red-300 text-red-600 hover:bg-red-50 rounded-xl h-12"
-                                        onClick={() => handleCancelDelivery(order.id || order.order_id)}
+                                        onClick={() => handleCancelDelivery(orderId)}
                                     >
                                         <XCircle className="w-5 h-5" />
                                     </Button>
                                 </div>
 
-                                <a href={`tel:${order.phone || order.customer_phone}`} className="mt-2 block">
-                                    <Button variant="ghost" className="w-full text-[#00408C] hover:bg-[#96ADD6]/10 rounded-xl h-10">
-                                        <Phone className="w-4 h-4 mr-2" /> Llamar Cliente
-                                    </Button>
-                                </a>
+                                {(order.phone || order.customer_phone) && (
+                                  <a href={`tel:${order.phone || order.customer_phone}`} className="mt-2 block">
+                                      <Button variant="ghost" className="w-full text-[#00408C] hover:bg-[#96ADD6]/10 rounded-xl h-10">
+                                          <Phone className="w-4 h-4 mr-2" /> Llamar Cliente
+                                      </Button>
+                                  </a>
+                                )}
                             </CardContent>
                         </Card>
-                    ))
+                      )
+                    })
                 )}
             </div>
 
@@ -487,33 +634,47 @@ export default function HomePage() {
                             <p className="text-sm mt-1">Espera a que cocina termine los pedidos</p>
                          </div>
                     ) : (
-                        orders.map(order => (
-                            <Card key={order.id || order.order_id} className="border-none shadow-sm hover:shadow-md transition-shadow rounded-[1.5rem] bg-white/60 backdrop-blur-sm">
+                        orders.map((order: any) => {
+                          const orderId = order.order_id || order.id
+                          const deliveryAddress = order.delivery_address || order.deliveryAddress
+                          
+                          return (
+                            <Card key={orderId} className="border-none shadow-sm hover:shadow-md transition-shadow rounded-[1.5rem] bg-white/60 backdrop-blur-sm">
                                 <CardContent className="p-5">
                                     <div className="flex justify-between items-center mb-3">
                                         <Badge className="bg-[#96ADD6] text-[#00408C] hover:bg-[#96ADD6] border-none">Listo</Badge>
-                                        <span className="font-bold text-[#00408C]">{order.id || order.order_id}</span>
+                                        <span className="font-bold text-[#00408C]">{orderId?.slice(-8) || orderId}</span>
                                     </div>
                                     
                                     <div className="mb-3">
-                                        <p className="font-bold text-lg text-[#00408C]">{order.deliveryAddress || order.delivery_address || 'Dirección no disponible'}</p>
-                                        <p className="text-sm text-[#00408C]/60">{(order.items || []).length} items • {order.paymentMethod || order.payment_method || 'Efectivo'}</p>
+                                        <p className="font-bold text-lg text-[#00408C]">{deliveryAddress || 'Dirección no disponible'}</p>
+                                        <p className="text-sm text-[#00408C]/60">{(order.items || []).length} items • {order.payment_method || order.paymentMethod || 'Efectivo'}</p>
                                     </div>
 
                                     <Button 
                                         className="w-full bg-[#00408C] hover:bg-[#00408C]/90 text-white rounded-xl h-10 font-medium"
-                                        onClick={() => handlePickupOrder(order.id || order.order_id)}
+                                        onClick={() => handlePickupOrder(orderId)}
                                     >
                                         Recoger Pedido <ArrowRight className="w-4 h-4 ml-2" />
                                     </Button>
                                 </CardContent>
                             </Card>
-                        ))
+                          )
+                        })
                     )}
                 </div>
             </div>
 
           </div>
+        )}
+
+        {/* --- VISTA ADMIN --- */}
+        {isAdmin && (
+          <AdminDashboard 
+            orders={orders}
+            stats={stats}
+            onRefresh={() => loadOrdersData()}
+          />
         )}
 
         {/* --- VISTA CHEF --- */}
@@ -541,27 +702,45 @@ export default function HomePage() {
                         <span className="text-sm font-bold text-[#00408C]/50">MESA / CLIENTE</span>
                         <span className="font-mono text-[#E85234] font-bold">{order.estimatedTime || order.estimated_time || '15'}m</span>
                       </div>
-                      <h3 className="text-xl font-bold text-[#00408C] mb-4">{order.customer || order.customer_name || 'Cliente'}</h3>
+                      <h3 className="text-xl font-bold text-[#00408C] mb-4">{order.customer_name || order.customer_id || order.customer || 'Cliente'}</h3>
                       <div className="space-y-2 mb-6">
                         {(order.items || []).map((item: any, idx: number) => (
                           <div key={idx} className="flex justify-between items-center border-b border-[#F2EEE9] pb-1">
-                            <span className="font-medium text-[#00408C]">{item.name || item.product_name}</span>
-                            <Badge variant="outline" className="border-[#00408C]/20 text-[#00408C]">x{item.qty || item.quantity || 1}</Badge>
+                            <span className="font-medium text-[#00408C]">{item.name || item.item_id}</span>
+                            <Badge variant="outline" className="border-[#00408C]/20 text-[#00408C]">x{item.quantity || item.qty || 1}</Badge>
                           </div>
                         ))}
                       </div>
                       <div className="flex gap-2">
-                        <Link href={`/pedidos/${order.id}`} className="flex-1">
+                        <Link href={`/pedidos/${order.order_id || order.id}`} className="flex-1">
                           <Button className="w-full bg-[#F2EEE9] text-[#00408C] hover:bg-[#e6dfd6] rounded-xl font-bold border-none">
                             Detalles
                           </Button>
                         </Link>
-                        <Button 
-                          className={`flex-1 rounded-xl font-bold border-none text-white ${(order.status === 'cooking' || order.status === 'in_progress') ? 'bg-[#E85234] hover:bg-[#E85234]/90' : 'bg-[#00408C] hover:bg-[#00408C]/90'}`}
-                          onClick={() => updateOrderStatus(order.id, (order.status === 'cooking' || order.status === 'in_progress') ? 'ready' : 'cooking')}
-                        >
-                          {(order.status === 'cooking' || order.status === 'in_progress') ? 'Terminar' : 'Cocinar'}
-                        </Button>
+                        {order.status === 'cooking' && (
+                          <Button 
+                            className="flex-1 rounded-xl font-bold border-none text-white bg-[#E85234] hover:bg-[#E85234]/90"
+                            onClick={() => updateOrderStatus(order.id || order.order_id, 'packing')}
+                          >
+                            Completar Cocción
+                          </Button>
+                        )}
+                        {order.status === 'packing' && (
+                          <Button 
+                            className="flex-1 rounded-xl font-bold border-none text-white bg-[#00408C] hover:bg-[#00408C]/90"
+                            onClick={() => updateOrderStatus(order.id || order.order_id, 'ready')}
+                          >
+                            Completar Empaquetado
+                          </Button>
+                        )}
+                        {(order.status !== 'cooking' && order.status !== 'packing') && (
+                          <Button 
+                            className="flex-1 rounded-xl font-bold border-none text-white bg-[#96ADD6] hover:bg-[#96ADD6]/90"
+                            disabled
+                          >
+                            {order.status === 'ready' ? 'Listo' : 'Esperando'}
+                          </Button>
+                        )}
                       </div>
                     </CardContent>
                   </Card>

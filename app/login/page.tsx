@@ -23,7 +23,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [name, setName] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
-  const [role, setRole] = useState("chef") 
+  const [role, setRole] = useState("chef")
+  
+  // Obtener el tipo de usuario del contexto para ocultar registro si es admin
+  const { user } = useAuth()
+  const isAdmin = user?.role === "admin" || (user as any)?.user_type === "admin" 
 
   // --- LOGIN ---
   const handleLogin = async (e: React.FormEvent) => {
@@ -179,6 +183,10 @@ export default function LoginPage() {
                 >
                   Regístrate aquí
                 </button>
+                <br />
+                <span className="text-xs text-white/60 mt-2 block">
+                  (Solo para chefs y repartidores)
+                </span>
             </p>
         </div>
 

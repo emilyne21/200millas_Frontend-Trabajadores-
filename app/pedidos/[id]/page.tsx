@@ -51,27 +51,50 @@ export default function OrderDetailPage() {
     
     try {
       if (isDelivery) {
-        // Driver: Usar endpoint /driver/timeline/{order_id}
-        console.log(`📡 [Driver] Cargando timeline del pedido ${orderId}`)
-        const timelineData = await apiClient.driver.getTimeline(orderId)
+        // Driver: Usar endpoint /driver/orders/{order_id} para detalles
+        console.log(`📡 [Driver] Cargando detalles del pedido ${orderId}`)
+        const orderData = await apiClient.driver.getOrderById(orderId)
+        setOrder(orderData)
         
-        // El timeline puede incluir el pedido completo o solo eventos
-        if (timelineData.order) {
-          setOrder(timelineData.order)
-        } else {
-          setOrder(timelineData)
+        // También cargar timeline si está disponible
+        try {
+          const timelineData = await apiClient.driver.getTimeline(orderId)
+          if (timelineData.timeline) {
+            setTimeline(timelineData.timeline)
+          } else if (orderData.workflow?.steps) {
+            // Si el timeline no está disponible, usar los steps del workflow
+            setTimeline(orderData.workflow.steps)
+          }
+        } catch {
+          // Si falla el timeline, intentar usar workflow del pedido
+          if (orderData.workflow?.steps) {
+            setTimeline(orderData.workflow.steps)
+          }
+          console.log("Timeline no disponible, usando workflow")
         }
         
-        // Eventos del timeline
-        if (timelineData.events || timelineData.timeline) {
-          setTimeline(timelineData.events || timelineData.timeline || [])
+        console.log("📊 Pedido cargado:", orderData)
+      } else if (isChef) {
+        // Chef: usar endpoint específico de chef
+        console.log(`📡 [Chef] Cargando detalles del pedido ${orderId}`)
+        const orderData = await apiClient.chef.getOrderDetail(orderId)
+        setOrder(orderData)
+        
+        // Si hay workflow, usar los steps como timeline
+        if (orderData.workflow?.steps) {
+          setTimeline(orderData.workflow.steps)
         }
         
-        console.log("📊 Timeline cargado:", timelineData)
+        console.log("📊 Pedido cargado:", orderData)
       } else {
-        // Chef u otros: usar endpoint genérico
+        // Otros: usar endpoint genérico
         const data = await apiClient.orders.getById(orderId)
         setOrder(data)
+        
+        // Si hay workflow, usar los steps como timeline
+        if (data.workflow?.steps) {
+          setTimeline(data.workflow.steps)
+        }
       }
     } catch (err: any) {
       console.error("Error fetching order details:", err)
@@ -114,7 +137,9 @@ export default function OrderDetailPage() {
     )
   }
 
-  const statusInfo = statusConfig[order.status] || { label: order.status, color: "bg-gray-500", icon: Clock }
+  // Normalizar el status del pedido
+  const orderStatus = order.status || order.order_status || "pending"
+  const statusInfo = statusConfig[orderStatus] || { label: orderStatus, color: "bg-gray-500", icon: Clock }
   const StatusIcon = statusInfo.icon
 
   return (
@@ -159,7 +184,7 @@ export default function OrderDetailPage() {
                             <div className="text-right">
                                 <p className="text-sm text-[#00408C]/60 font-medium uppercase tracking-wide">Total</p>
                                 <p className="text-3xl font-bold text-[#E85234]">
-                                  S/. {typeof order.total === 'number' ? order.total.toFixed(2) : '--'}
+                                  S/. {typeof order.total === 'number' ? order.total.toFixed(2) : (typeof order.totalPrice === 'number' ? order.totalPrice.toFixed(2) : '--')}
                                 </p>
                             </div>
                         </div>
@@ -173,7 +198,7 @@ export default function OrderDetailPage() {
                                     </div>
                                     <div>
                                         <p className="text-xs font-bold text-[#00408C]/50 uppercase">Cliente</p>
-                                        <p className="font-bold text-[#00408C]">{order.customer || order.customer_name}</p>
+                                        <p className="font-bold text-[#00408C]">{order.customer_name || order.customer_id || order.customer || "Cliente"}</p>
                                     </div>
                                 </div>
                                 {(order.phone || order.customer_phone) && (
@@ -219,12 +244,12 @@ export default function OrderDetailPage() {
                                 <div key={idx} className="py-4 flex justify-between items-center">
                                     <div className="flex items-center gap-4">
                                         <div className="w-8 h-8 rounded-lg bg-[#F2EEE9] flex items-center justify-center font-bold text-[#00408C] text-sm">
-                                            {item.qty || item.quantity || 1}x
+                                            {item.quantity || item.qty || 1}x
                                         </div>
-                                        <span className="font-medium text-[#00408C]">{item.name || item.product_name}</span>
+                                        <span className="font-medium text-[#00408C]">{item.name || item.item_id || item.product_name}</span>
                                     </div>
                                     <span className="font-bold text-[#00408C]">
-                                      S/. {((item.price || 0) * (item.qty || item.quantity || 1)).toFixed(2)}
+                                      S/. {((item.price || 0) * (item.quantity || item.qty || 1)).toFixed(2)}
                                     </span>
                                 </div>
                             ))}
@@ -233,7 +258,7 @@ export default function OrderDetailPage() {
                         <div className="mt-6 pt-6 border-t-2 border-dashed border-[#F2EEE9] flex justify-between items-center">
                             <span className="text-[#00408C]/60 font-medium">Total a cobrar</span>
                             <span className="text-2xl font-bold text-[#00408C]">
-                              S/. {typeof order.total === 'number' ? order.total.toFixed(2) : '--'}
+                              S/. {typeof order.total === 'number' ? order.total.toFixed(2) : (typeof order.totalPrice === 'number' ? order.totalPrice.toFixed(2) : '--')}
                             </span>
                         </div>
                     </CardContent>
@@ -330,16 +355,72 @@ export default function OrderDetailPage() {
                     </CardContent>
                 </Card>
 
-                {/* Botón de Acción Principal */}
-                {order.status === "ready" && isDelivery && (
+                {/* Botones de Acción según el rol */}
+                {isDelivery && orderStatus === "ready" && (
                     <Button 
                       className="w-full h-14 rounded-[1.5rem] bg-[#E85234] hover:bg-[#E85234]/90 text-white text-lg font-bold shadow-lg shadow-red-200"
-                      onClick={() => {
-                        // Aquí podrías llamar a apiClient.driver.pickup(order.id)
-                        console.log("Iniciando entrega...")
+                      onClick={async () => {
+                        try {
+                          await apiClient.driver.pickup(order.order_id || order.id)
+                          alert("Pedido recogido exitosamente")
+                          loadOrderDetails(order.order_id || order.id)
+                        } catch (error: any) {
+                          alert(error.message || "Error al recoger el pedido")
+                        }
                       }}
                     >
-                        <Truck className="w-6 h-6 mr-2" /> Iniciar Entrega
+                        <Truck className="w-6 h-6 mr-2" /> Recoger Pedido
+                    </Button>
+                )}
+                
+                {isDelivery && (orderStatus === "in_delivery" || orderStatus === "dispatched") && (
+                    <Button 
+                      className="w-full h-14 rounded-[1.5rem] bg-[#00408C] hover:bg-[#00408C]/90 text-white text-lg font-bold shadow-lg shadow-blue-200"
+                      onClick={async () => {
+                        try {
+                          await apiClient.driver.complete(order.order_id || order.id)
+                          alert("Entrega completada exitosamente")
+                          router.push("/")
+                        } catch (error: any) {
+                          alert(error.message || "Error al completar la entrega")
+                        }
+                      }}
+                    >
+                        <CheckCircle2 className="w-6 h-6 mr-2" /> Completar Entrega
+                    </Button>
+                )}
+                
+                {isChef && orderStatus === "cooking" && (
+                    <Button 
+                      className="w-full h-14 rounded-[1.5rem] bg-[#E85234] hover:bg-[#E85234]/90 text-white text-lg font-bold shadow-lg shadow-red-200"
+                      onClick={async () => {
+                        try {
+                          await apiClient.chef.completeCooking(order.order_id || order.id)
+                          alert("Cocción completada. Ahora puedes empaquetar.")
+                          loadOrderDetails(order.order_id || order.id)
+                        } catch (error: any) {
+                          alert(error.message || "Error al completar la cocción")
+                        }
+                      }}
+                    >
+                        <ChefHat className="w-6 h-6 mr-2" /> Completar Cocción
+                    </Button>
+                )}
+                
+                {isChef && orderStatus === "packing" && (
+                    <Button 
+                      className="w-full h-14 rounded-[1.5rem] bg-[#00408C] hover:bg-[#00408C]/90 text-white text-lg font-bold shadow-lg shadow-blue-200"
+                      onClick={async () => {
+                        try {
+                          await apiClient.chef.completePacking(order.order_id || order.id)
+                          alert("Empaquetado completado. El pedido está listo para el repartidor.")
+                          router.push("/")
+                        } catch (error: any) {
+                          alert(error.message || "Error al completar el empaquetado")
+                        }
+                      }}
+                    >
+                        <Package className="w-6 h-6 mr-2" /> Completar Empaquetado
                     </Button>
                 )}
                 

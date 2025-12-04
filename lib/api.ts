@@ -1,8 +1,8 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL
-const WS_BASE_URL = process.env.NEXT_PUBLIC_WEBSOCKET_URL
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://ebd7lodar7.execute-api.us-east-1.amazonaws.com/dev"
+const WS_BASE_URL = process.env.NEXT_PUBLIC_WEBSOCKET_URL || "wss://prb3gpi5hk.execute-api.us-east-1.amazonaws.com/dev"
 
-if (!API_BASE_URL) {
-  console.warn("NEXT_PUBLIC_API_URL no está definida en las variables de entorno")
+if (!process.env.NEXT_PUBLIC_API_URL) {
+  console.warn("NEXT_PUBLIC_API_URL no está definida en las variables de entorno, usando URL por defecto")
 }
 
 // Token almacenado en memoria (no localStorage)
@@ -66,7 +66,9 @@ export const apiClient = {
       })
       if (!response.ok) throw new Error("Failed to fetch orders")
       const data = await response.json()
-      return data.body_json?.data || data.data || data
+      // El backend devuelve { success: true, data: { orders: [...], count: ... } }
+      const extracted = data.body_json?.data || data.data || data
+      return extracted.orders || extracted || []
     },
     
     updateStatus: async (orderId: string, status: string) => {
@@ -174,6 +176,30 @@ export const apiClient = {
       const data = await response.json()
       return data.body_json?.data || data.data || data
     },
+    
+    // POST /driver/availability - Reportar disponibilidad (available/busy/offline)
+    reportAvailability: async (status: "available" | "busy" | "offline") => {
+      console.log(`📤 [Driver] Reportando disponibilidad: ${status}`)
+      const response = await fetch(`${API_BASE_URL}/driver/availability`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status }),
+      })
+      if (!response.ok) throw new Error("Failed to report availability")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+    
+    // GET /driver/available-list - Ver lista de drivers disponibles
+    getAvailableList: async () => {
+      console.log("📤 [Driver] Obteniendo lista de drivers disponibles")
+      const response = await fetch(`${API_BASE_URL}/driver/available-list`, {
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) throw new Error("Failed to fetch available drivers")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
   },
 
   // Menu endpoints
@@ -246,23 +272,77 @@ export const apiClient = {
       })
       
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: "Login failed" }))
-        throw new Error(error.message || "Login failed")
+        let errorMessage = "Email o password incorrecto"
+        try {
+          const errorData = await response.json()
+          // El backend puede devolver error en diferentes formatos
+          if (errorData.body_json && errorData.body_json.error) {
+            errorMessage = errorData.body_json.error
+          } else if (errorData.error) {
+            errorMessage = errorData.error
+          } else if (errorData.message) {
+            errorMessage = errorData.message
+          }
+        } catch {
+          // Si no se puede parsear, usar el mensaje por defecto
+        }
+        throw new Error(errorMessage)
       }
       
-      const result = await response.json()
-      console.log("📥 Login response received")
+      let result
+      try {
+        const responseText = await response.text()
+        if (!responseText || responseText.trim() === '') {
+          throw new Error("Respuesta vacía del servidor")
+        }
+        result = JSON.parse(responseText)
+      } catch (parseError: any) {
+        throw new Error("Respuesta inválida del servidor: no se pudo parsear la respuesta JSON")
+      }
       
-      // Parsear la estructura del backend
-      const data = result.body_json?.data || result.data || result
+      console.log("📥 Login response received:", result)
+      
+      // El backend devuelve: { success: true, data: { token, email, name, user_type, expires_in } }
+      // O puede venir envuelto en body_json si es respuesta de Lambda
+      let actualBody = result
+      if (result.body_json && typeof result.body_json === 'object') {
+        actualBody = result.body_json
+      } else if (result.body && typeof result.body === 'string') {
+        try {
+          actualBody = JSON.parse(result.body)
+        } catch (e) {
+          throw new Error("Respuesta inválida del servidor: no se pudo parsear el body")
+        }
+      } else if (result.statusCode && result.body) {
+        try {
+          actualBody = typeof result.body === 'string' ? JSON.parse(result.body) : result.body
+        } catch (e) {
+          throw new Error("Respuesta inválida del servidor: formato de respuesta no reconocido")
+        }
+      }
+      
+      // Verificar si es un error
+      if (actualBody && actualBody.success === false) {
+        const errorMsg = actualBody.error || actualBody.message || "Error de autenticación"
+        throw new Error(errorMsg)
+      }
+      
+      // Extraer datos - el backend devuelve { success: true, data: {...} }
+      const data = actualBody.data || actualBody
+      
+      if (!data || !data.token) {
+        throw new Error("Respuesta inválida del servidor: no se recibió token de autenticación")
+      }
       
       return {
         token: data.token,
         user: {
+          id: data.email?.split('@')[0] || data.email,
           email: data.email,
           name: data.name,
           user_type: data.user_type,
-          role: data.user_type // Agregar role también para compatibilidad
+          role: data.user_type, // Agregar role también para compatibilidad
+          tenantId: "200millas"
         }
       }
     },
@@ -286,13 +366,55 @@ export const apiClient = {
       })
       
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: "Registration failed" }))
-        console.log("❌ Registration error:", error)
-        throw new Error(error.message || "Registration failed")
+        let errorMessage = "Error al crear cuenta"
+        try {
+          const errorData = await response.json()
+          if (errorData.body_json && errorData.body_json.error) {
+            errorMessage = errorData.body_json.error
+          } else if (errorData.error) {
+            errorMessage = errorData.error
+          } else if (errorData.message) {
+            errorMessage = errorData.message
+          }
+        } catch {
+          // Si no se puede parsear, usar el mensaje por defecto
+        }
+        console.log("❌ Registration error:", errorMessage)
+        throw new Error(errorMessage)
       }
       
-      const data = await response.json()
-      return data.body_json?.data || data.data || data
+      let result
+      try {
+        const responseText = await response.text()
+        result = JSON.parse(responseText)
+      } catch (parseError) {
+        throw new Error("Respuesta inválida del servidor: no se pudo parsear la respuesta JSON")
+      }
+      
+      // El backend devuelve: { success: true, data: { message, user: {...} } }
+      let actualBody = result
+      if (result.body_json && typeof result.body_json === 'object') {
+        actualBody = result.body_json
+      } else if (result.body && typeof result.body === 'string') {
+        try {
+          actualBody = JSON.parse(result.body)
+        } catch (e) {
+          throw new Error("Respuesta inválida del servidor: no se pudo parsear el body")
+        }
+      } else if (result.statusCode && result.body) {
+        try {
+          actualBody = typeof result.body === 'string' ? JSON.parse(result.body) : result.body
+        } catch (e) {
+          throw new Error("Respuesta inválida del servidor: formato de respuesta no reconocido")
+        }
+      }
+      
+      if (actualBody && actualBody.success === false) {
+        const errorMsg = actualBody.error || actualBody.message || "Error al crear cuenta"
+        throw new Error(errorMsg)
+      }
+      
+      return actualBody.data || actualBody
     },
     
     logout: async () => {
@@ -302,6 +424,118 @@ export const apiClient = {
         headers: getAuthHeaders(),
       })
       if (!response.ok) throw new Error("Logout failed")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+  },
+
+  // Chef endpoints
+  chef: {
+    getAssignedOrders: async () => {
+      console.log("📤 [Chef] Obteniendo pedidos asignados")
+      const response = await fetch(`${API_BASE_URL}/chef/assigned`, {
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) throw new Error("Failed to fetch assigned orders")
+      const data = await response.json()
+      // El backend devuelve { success: true, data: { orders: [...], count: ... } }
+      const extracted = data.body_json?.data || data.data || data
+      return extracted.orders || extracted || []
+    },
+    
+    getOrderDetail: async (orderId: string) => {
+      console.log(`📤 [Chef] Obteniendo detalle del pedido ${orderId}`)
+      const response = await fetch(`${API_BASE_URL}/chef/orders/${orderId}`, {
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) throw new Error("Failed to fetch order detail")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+    
+    completeCooking: async (orderId: string, notes?: string) => {
+      console.log(`📤 [Chef] Completando cocción del pedido ${orderId}`)
+      const response = await fetch(`${API_BASE_URL}/chef/complete-cooking/${orderId}`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ notes: notes || "" }),
+      })
+      if (!response.ok) throw new Error("Failed to complete cooking")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+    
+    completePacking: async (orderId: string, notes?: string) => {
+      console.log(`📤 [Chef] Completando empaquetado del pedido ${orderId}`)
+      const response = await fetch(`${API_BASE_URL}/chef/complete-packing/${orderId}`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ notes: notes || "" }),
+      })
+      if (!response.ok) throw new Error("Failed to complete packing")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+    
+    // POST /chef/availability - Reportar disponibilidad (available/busy/offline)
+    reportAvailability: async (status: "available" | "busy" | "offline") => {
+      console.log(`📤 [Chef] Reportando disponibilidad: ${status}`)
+      const response = await fetch(`${API_BASE_URL}/chef/availability`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status }),
+      })
+      if (!response.ok) throw new Error("Failed to report availability")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+    
+    // GET /chef/available - Ver todos los chefs y su estado
+    getAvailableChefs: async () => {
+      console.log("📤 [Chef] Obteniendo lista de chefs disponibles")
+      const response = await fetch(`${API_BASE_URL}/chef/available`, {
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) throw new Error("Failed to fetch available chefs")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+  },
+
+  // Admin endpoints
+  admin: {
+    // GET /admin/chefs - Listar todos los chefs
+    getChefs: async () => {
+      console.log("📤 [Admin] Obteniendo lista de chefs")
+      const response = await fetch(`${API_BASE_URL}/admin/chefs`, {
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) throw new Error("Failed to fetch chefs")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+    
+    // GET /admin/drivers - Listar todos los drivers
+    getDrivers: async () => {
+      console.log("📤 [Admin] Obteniendo lista de drivers")
+      const response = await fetch(`${API_BASE_URL}/admin/drivers`, {
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) throw new Error("Failed to fetch drivers")
+      const data = await response.json()
+      return data.body_json?.data || data.data || data
+    },
+    
+    // GET /admin/users - Listar todos los usuarios
+    getUsers: async (userType?: string) => {
+      console.log("📤 [Admin] Obteniendo lista de usuarios", userType ? `filtrado por: ${userType}` : "")
+      const url = userType 
+        ? `${API_BASE_URL}/admin/users?user_type=${userType}`
+        : `${API_BASE_URL}/admin/users`
+      const response = await fetch(url, {
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) throw new Error("Failed to fetch users")
       const data = await response.json()
       return data.body_json?.data || data.data || data
     },
