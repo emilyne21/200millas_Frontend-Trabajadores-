@@ -70,7 +70,8 @@ export interface User {
   id: string
   email: string
   name: string
-  role: "customer" | "cook" | "dispatcher" | "driver" | "admin"
+  role: "customer" | "cook" | "dispatcher" | "driver" | "admin" | "chef"
+  user_type?: "chef" | "driver"
   tenantId: string
 }
 
